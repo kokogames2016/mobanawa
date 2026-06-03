@@ -3,7 +3,7 @@ import { playCardPlace, playSAPlace, playPass, playReset, playSPGain, playCollis
 import { useStore, isSampleDeck } from '../../store';
 import type { Card, CellState, PlaceAction, Stage, TurnRecord } from '../../types';
 import { rotateShape, getShapeBounds } from '../../utils/cardShape';
-import { canPlace, countCells, getAllSPPositions, getActivatedSPPositions, hasAnyValidPlacement, resolveSimultaneous, shuffleDeck } from '../../utils/boardLogic';
+import { canPlace, countCells, getActivatedSPPositions, hasAnyValidPlacement, resolveSimultaneous } from '../../utils/boardLogic';
 import { CardShape } from '../common/CardShape';
 import stagesData from '../../data/stages.json';
 import { IS_TOUCH, useIsLandscape } from '../../hooks/useIsLandscape';
@@ -701,8 +701,6 @@ export function BoardSim() {
   }, [gameState, hoverPos, p1SelectedCard, p2SelectedCard, p1Rotation, p2Rotation, activePlayer, cellSize, stage, p1SAMode, p2SAMode, pendingPlacement, freePlacement]);
 
   const counts = gameState ? countCells(gameState.grid) : null;
-  // 全 SP セル（炎オーバーレイ用）
-  const allSPPos = gameState ? getAllSPPositions(gameState.grid) : null;
   // アクティベートされた SP セル（SP カウント用）
   const activatedSPPos = gameState ? getActivatedSPPositions(gameState.grid) : null;
   const activatedSP = activatedSPPos ? { p1: activatedSPPos.p1.length, p2: activatedSPPos.p2.length } : null;
@@ -873,8 +871,8 @@ export function BoardSim() {
                 saUnlocked ? 'bg-red-900 text-red-300 hover:bg-red-700 border border-red-600' :
                 'bg-gray-800 text-gray-600 border border-gray-700 cursor-not-allowed'
               }`}
-              title={saUnlocked ? `SA発動（SP${selectedCard.spp}消費）` : `SP不足(必要:${selectedCard.spp} 現在:${avSP})`}>
-              {isSAMode ? '★SA中' : `SA(${avSP}/${selectedCard.spp})`}
+              title={saUnlocked ? `SA発動（SP${selectedCard?.spp}消費）` : `SP不足(必要:${selectedCard?.spp} 現在:${avSP})`}>
+              {isSAMode ? '★SA中' : `SA(${avSP}/${selectedCard?.spp})`}
             </button>
           </div>
         )}

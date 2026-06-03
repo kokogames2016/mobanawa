@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useStore, isSampleDeck } from '../../store';
-import type { Card, CellState, Deck, CpuLevel } from '../../types';
+import type { CellState, Deck, CpuLevel } from '../../types';
 import { CardShape } from '../common/CardShape';
 import stagesData from '../../data/stages.json';
 import type { Stage } from '../../types';
@@ -9,7 +9,7 @@ import {
   canPlace, placeCard, resolveSimultaneous,
   shuffleDeck, countCells, getActivatedSPPositions,
 } from '../../utils/boardLogic';
-import { computeCpuMove, getAllValidPlacements, pickCardToTrash } from '../../utils/battleLogic';
+import { computeCpuMove, pickCardToTrash } from '../../utils/battleLogic';
 import type { Rotation, StageInfo } from '../../utils/battleLogic';
 import { useIsLandscape } from '../../hooks/useIsLandscape';
 
@@ -115,7 +115,7 @@ export function BattleSim() {
   const [p2SAMode,  setP2SAMode]  = useState(false);
   const [pending,   setPending]   = useState<PendingPlacement | null>(null);
   const [hover,     setHover]     = useState<{ x: number; y: number } | null>(null);
-  const [cellSize,  setCellSize]  = useState(10);
+  const cellSize = 10;
 
   // ── 派生値 ────────────────────────────────────────────────────────────────
   const cardMap = useMemo(() => new Map(cards.map(c => [c.id, c])), [cards]);
@@ -483,7 +483,7 @@ export function BattleSim() {
     advanceTurn(newGrid);
   }
 
-  function advanceTurn(currentGrid: CellState[][]) {
+  function advanceTurn(_currentGrid: CellState[][]) {
     if (turn >= MAX_TURNS) {
       setScreen('result');
       return;
@@ -726,9 +726,7 @@ export function BattleSim() {
     const sel  = isP1 ? p1Sel : p2Sel;
     const isSel = sel === cardId;
     const isSA  = isP1 ? p1SAMode : p2SAMode;
-    const rot   = isP1 ? p1Rot : p2Rot;
     const avSP  = isP1 ? availP1SP : availP2SP;
-    const saOk  = (card?.spp ?? 0) > 0 && avSP >= (card?.spp ?? 0);
     const hasPending = pending?.cardId === cardId;
 
     if (!card) return null;
