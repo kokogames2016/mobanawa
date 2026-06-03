@@ -1038,7 +1038,7 @@ export function BoardSim() {
               activeSAMode?'bg-red-600 text-white ring-1 ring-red-400 animate-pulse':
               saOk?'bg-red-900 text-red-300 hover:bg-red-700 border border-red-600':
               'bg-gray-800 text-gray-600 border border-gray-700 cursor-not-allowed'}`}>
-            {activeSAMode?'★SA中':`SA(${activeAvSP}/${activeSCard.spp})`}
+            {activeSAMode?'★SA中':`SA(${activeAvSP}/${activeSCard?.spp})`}
           </button>
         )}
         <button onClick={activePlayer==='p1'?handleP1Pass:handleP2Pass} disabled={playerAction!==null}
