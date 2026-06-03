@@ -125,6 +125,16 @@ export function BattleSim() {
   const availP1SP = p1SPAccum - p1SPSpent;
   const availP2SP = p2SPAccum - p2SPSpent;
 
+  // 仮配置時のスコア予測
+  const pendingScore = useMemo(() => {
+    if (!pending?.isValid) return null;
+    const card = cardMap.get(pending.cardId);
+    if (!card?.shape) return null;
+    const simGrid = placeCard(grid, card.shape, pending.x, pending.y, pending.player,
+      card.specialPos, pending.rotation, pending.isSA);
+    return countCells(simGrid)[pending.player];
+  }, [pending, grid, cardMap]);
+
   const stageInfo = useMemo<StageInfo | undefined>(() => {
     if (!stage.p1Start || !stage.p2Start) return undefined;
     return {
@@ -370,13 +380,27 @@ export function BattleSim() {
     const isP1 = trashMode === 'p1';
     setTrashMode(null);
     if (isP1) {
-      if (trashCardId) setP1Hand(prev => prev.filter(id => id !== trashCardId));
+      // トラッシュ後、山札から1枚ドローして手札4枚を維持
+      const afterTrash = trashCardId ? p1Hand.filter(id => id !== trashCardId) : [...p1Hand];
+      const newP1Hand = afterTrash.length < HAND_SIZE && p1Pile.length > 0
+        ? [...afterTrash, p1Pile[0]] : afterTrash;
+      const newP1Pile = afterTrash.length < HAND_SIZE && p1Pile.length > 0
+        ? p1Pile.slice(1) : p1Pile;
+      setP1Hand(newP1Hand);
+      setP1Pile(newP1Pile);
       setP1SPAccum(prev => prev + 1);
       setP1Action('pass');
       setP1Sel(null); setPending(null); setP1SAMode(false);
       setWaitFor('p2');
     } else {
-      if (trashCardId) setP2Hand(prev => prev.filter(id => id !== trashCardId));
+      // トラッシュ後、山札から1枚ドローして手札4枚を維持
+      const afterTrash = trashCardId ? p2Hand.filter(id => id !== trashCardId) : [...p2Hand];
+      const newP2Hand = afterTrash.length < HAND_SIZE && p2Pile.length > 0
+        ? [...afterTrash, p2Pile[0]] : afterTrash;
+      const newP2Pile = afterTrash.length < HAND_SIZE && p2Pile.length > 0
+        ? p2Pile.slice(1) : p2Pile;
+      setP2Hand(newP2Hand);
+      setP2Pile(newP2Pile);
       setP2SPAccum(prev => prev + 1);
       let newGrid = grid;
       if (p1Action !== 'pass' && p1Action !== null) {
@@ -421,7 +445,7 @@ export function BattleSim() {
           showCpuMsg(`CPU が「${move.cardName}」を配置しました`);
         }
       } else {
-        // CPUパス：最も不要なカードを自動トラッシュ＋SP+1
+        // CPUパス：P1のカードを配置してから処理
         if (p1Action !== 'pass') {
           const card = cardMap.get(p1Action.cardId);
           if (card?.shape) {
@@ -429,23 +453,38 @@ export function BattleSim() {
               card.specialPos, p1Action.rotation, p1Action.isSA);
           }
         }
-        const trashId = pickCardToTrash(p2Hand, cardMap);
         setP2SPAccum(prev => prev + 1);
-        if (trashId) {
-          setP2Hand(prev => prev.filter(id => id !== trashId));
-          showCpuMsg(`CPU がパスしました（トラッシュ: ${cardMap.get(trashId)?.name ?? '?'}）`);
+        const trashId = pickCardToTrash(p2Hand, cardMap);
+        showCpuMsg(trashId
+          ? `CPU がパスしました（トラッシュ: ${cardMap.get(trashId)?.name ?? '?'}）`
+          : 'CPU がパスしました');
+      }
+
+      // CPU配置 or パスに応じて手札・山札を更新
+      // ★パス時は stale closure の p2Hand を直接使わず同期的に計算する
+      let finalP2Hand: string[];
+      let finalP2Pile: string[];
+      if (move !== 'pass') {
+        const { newHand, newPile } = drawCard(move.cardId, p2Hand, p2Pile);
+        finalP2Hand = newHand;
+        finalP2Pile = newPile;
+      } else {
+        // トラッシュ後、山札から1枚ドロー（手札4枚を維持）
+        const trashId = pickCardToTrash(p2Hand, cardMap);
+        const afterTrash = trashId ? p2Hand.filter(id => id !== trashId) : [...p2Hand];
+        if (afterTrash.length < HAND_SIZE && p2Pile.length > 0) {
+          finalP2Hand = [...afterTrash, p2Pile[0]];
+          finalP2Pile = p2Pile.slice(1);
         } else {
-          showCpuMsg('CPU がパスしました');
+          finalP2Hand = afterTrash;
+          finalP2Pile = p2Pile;
         }
       }
 
-      const { newHand: nh2, newPile: np2 } = move !== 'pass'
-        ? drawCard(move.cardId, p2Hand, p2Pile)
-        : { newHand: p2Hand, newPile: p2Pile };
-
       applyNewSP(newGrid);
       setGrid(newGrid);
-      setP2Hand(nh2); setP2Pile(np2);
+      setP2Hand(finalP2Hand);
+      setP2Pile(finalP2Pile);
       setCpuThinking(false);
       advanceTurn(newGrid);
     }, CPU_DELAY);
@@ -844,6 +883,14 @@ export function BattleSim() {
           className={`px-1 py-1 rounded text-xs ${isActive && !pending ? 'bg-gray-700 active:bg-gray-600 text-white' : 'bg-gray-800 text-gray-600 cursor-not-allowed'}`}>
           パス
         </button>
+        {/* 配置予測スコア */}
+        {pendingScore !== null && (
+          <div className={`px-1 py-0.5 rounded text-center text-xs font-bold ${
+            pending?.player === 'p1' ? 'bg-orange-950 text-orange-300' : 'bg-blue-950 text-blue-300'
+          }`}>
+            予測<br/>{pendingScore}マス
+          </div>
+        )}
       </div>
     );
   }

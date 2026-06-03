@@ -338,7 +338,7 @@ export function DrawSim() {
 
   // ─── Portrait layout ──────────────────────────────────────────────────────────
   return (
-    <div className="overflow-y-auto p-4 max-w-3xl mx-auto" style={{ height: 'calc(100vh - 60px)' }}>
+    <div className="overflow-y-auto p-4 max-w-3xl mx-auto" style={{ height: '100%' }}>
       <h2 className="text-xl font-bold text-white mb-4">ドローシミュレーション</h2>
       {deckSelectRow}
       {probabilityPanel}
