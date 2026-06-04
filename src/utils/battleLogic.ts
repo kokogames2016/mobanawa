@@ -16,6 +16,8 @@ export interface CpuMove {
 export interface StageInfo {
   p1StartRow: number;
   p2StartRow: number;
+  p1StartCol: number;
+  p2StartCol: number;
   rows: number;
   cols: number;
 }
@@ -212,6 +214,46 @@ function isP2Side(r: number, si: StageInfo): boolean {
   return si.p2StartRow > si.p1StartRow ? r >= mid : r <= mid;
 }
 
+// ─── ターン別の P1 脅威評価 ──────────────────────────────────────────────────
+
+/** P1セルの中でP2スタートマスに最も近いチェビシェフ距離を返す */
+function p1MinChebyshevFromP2Start(grid: CellState[][], si: StageInfo): number {
+  const rows = grid.length, cols = grid[0]?.length ?? 0;
+  let minDist = Infinity;
+  for (let r = 0; r < rows; r++)
+    for (let c = 0; c < cols; c++)
+      if (grid[r][c] === 'p1' || grid[r][c] === 'p1_sp') {
+        const rowDist = Math.abs(r - si.p2StartRow);
+        const colDist = Math.abs(c - si.p2StartCol);
+        minDist = Math.min(minDist, Math.max(rowDist, colDist));
+      }
+  return isFinite(minDist) ? minDist : 999;
+}
+
+/** P1に隣接している壁/障害物マスに近い空きマスへの配置ボーナス（防衛ラインを塞ぐ） */
+function countAdjToBlockedNearP1(newGrid: CellState[][]): number {
+  const rows = newGrid.length, cols = newGrid[0]?.length ?? 0;
+  let bonus = 0;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      if (newGrid[r][c] !== 'p2' && newGrid[r][c] !== 'p2_sp') continue;
+      // P2の新規セルが W/B/blocked に隣接しているかつ P1 に隣接している
+      let adjWall = false, adjP1 = false;
+      for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+        if (dr===0&&dc===0) continue;
+        const nr=r+dr,nc=c+dc;
+        if (nr<0||nr>=rows||nc<0||nc>=cols) continue;
+        const cell = newGrid[nr][nc];
+        if (cell==='W'||cell==='B'||cell==='blocked') adjWall = true;
+        if (cell==='p1'||cell==='p1_sp') adjP1 = true;
+      }
+      if (adjWall && adjP1) bonus += 3;
+      else if (adjWall) bonus += 1;
+    }
+  }
+  return bonus;
+}
+
 // ─── 通常配置スコア（フェーズ別戦略） ────────────────────────────────────────
 
 function scoreNormalMove(
@@ -267,6 +309,32 @@ function scoreNormalMove(
   const isEarly = currentTurn <= 4;
   const isMid   = currentTurn > 4 && currentTurn <= 8;
 
+  // ── ターン1・2 特別ボーナス ──────────────────────────────────────────────
+  // ターン1：なるべく敵陣に近い位置へ（全レベル共通、frontier最大化）
+  const isTurn1 = currentTurn === 1;
+  const isTurn2 = currentTurn === 2;
+
+  // ターン2：P1の脅威レベルを判断
+  let turn2DefenseMode = false;   // true = P1が近い→防衛優先
+  let p1MinDist = 999;
+  if (isTurn2 && si) {
+    p1MinDist = p1MinChebyshevFromP2Start(grid, si);
+    // チェビシェフ距離6以内 or 縦横距離7以内 → 防衛モード
+    const rowDist = countType(grid,'p1','p1_sp') > 0
+      ? (() => {
+          let minRow = Infinity;
+          for (let r=0; r<rows; r++) for (let c=0; c<cols; c++)
+            if (grid[r][c]==='p1'||grid[r][c]==='p1_sp')
+              minRow = Math.min(minRow, Math.abs(r - si.p2StartRow));
+          return isFinite(minRow) ? minRow : 999;
+        })()
+      : 999;
+    turn2DefenseMode = p1MinDist <= 6 || rowDist <= 7;
+  }
+
+  const adjToBlockedNearP1Bonus = (isTurn2 && turn2DefenseMode)
+    ? countAdjToBlockedNearP1(newGrid) : 0;
+
   // 壁形成ボーナス：配置前は壁なし → 配置後に壁あり
   const hadWall = checkWallFormation(grid);
   const hasWall = hadWall || checkWallFormation(newGrid);
@@ -288,29 +356,49 @@ function scoreNormalMove(
   // 既存壁がある場合の内部壁形成ボーナス（P1侵入を封じる）
   const innerWallVal = hadWall && p1InP2Half > 0 && hasWall ? 10 : 0;
 
+  // ── ターン1共通：敵陣最深部を目指す追加ボーナス ─────────────────────────
+  const turn1FrontierBonus = isTurn1 && si ? frontierMax * 10 : 0;
+
+  // ── ターン2共通：P1の脅威に応じた対応ボーナス ────────────────────────────
+  const turn2Bonus = isTurn2
+    ? turn2DefenseMode
+      ? adjToBlockedNearP1Bonus * 2 + wallBonusVal * 1.5  // 防衛モード
+      : (si ? frontierMax * 8 : 0)                         // 攻撃継続（P1が遠い）
+    : 0;
+
   switch (level) {
     // ── Lv1：アグロ ──────────────────────────────────────────────────────────
     case 1: {
-      // 全フェーズ：常に敵陣攻撃優先
       const aggrFactor = isEarly ? 2.0 : isMid ? 1.5 : 1.0;
       const attack = (adjToP1 * 4 + (si ? frontierMax * 6 : 0) + p1AdjSP * 3) * aggrFactor;
-      const fill   = isMid ? newCells * 1.0 : 0; // 中盤のみ少し自陣も埋める
-      return attack + fill + p2Space * 1 + continuity * 0.3 + wallBonusVal * 0.5;
+      const fill   = isMid ? newCells * 1.0 : 0;
+      return attack + fill + p2Space * 1 + continuity * 0.3 + wallBonusVal * 0.5
+        + turn1FrontierBonus + turn2Bonus;
     }
 
     // ── Lv2：コントロール ─────────────────────────────────────────────────────
     case 2: {
-      if (isEarly) {
-        // 序盤：自陣半面固め・壁形成・敵陣はペナルティ
-        const def = (si ? p2HalfCells * 3 + wallDensity * 2 : continuity * 2);
+      if (isTurn1) {
+        // ターン1：敵陣に踏み出しつつも自陣展開（Lv2らしくフロンティア低め）
+        const def = si ? p2HalfCells * 2 + wallDensity * 1 : continuity * 1;
+        return newCells * 2 + def + p2Space * 1 + turn1FrontierBonus * 0.4;
+      } else if (isTurn2) {
+        // ターン2：防衛か継続かを切り替え
+        if (turn2DefenseMode) {
+          const def = si ? p2HalfCells * 3 + wallDensity * 2 : continuity * 2;
+          return surrounded * 8 + newSP * 4 + def + p2Space * 1 + turn2Bonus + wallBonusVal;
+        } else {
+          const def = si ? p2HalfCells * 2 + wallDensity * 1 : continuity * 1;
+          return surrounded * 8 + newSP * 4 + def + p2Space * 1 + turn2Bonus;
+        }
+      } else if (isEarly) {
+        const def = si ? p2HalfCells * 3 + wallDensity * 2 : continuity * 2;
         const risk = si ? frontierMax * -6 : 0;
         return surrounded * 8 + newSP * 4 + def + p2Space * 1 + risk + wallBonusVal;
       } else if (isMid) {
-        // 中盤：自陣を綺麗に埋める + SP + 壁
         const fillEfficiency = newCells * 2.5 + p2HalfCells * 2 + wallDensity * 1.5;
         return surrounded * 10 + newSP * 5 + fillEfficiency + p2Space * 1 + wallBonusVal + innerWallVal;
       } else {
-        // 終盤：SA準備（SP最大化）
         return surrounded * 12 + newSP * 6 + newCells * 1.0 + p2Space * 1;
       }
     }
@@ -322,17 +410,18 @@ function scoreNormalMove(
       const ctl = surrounded * 10 + newSP * 5 + newCells * 0.5 + (si ? p2HalfCells * 1.5 : 0);
       const fillB = isMid ? (newCells * 1.5 + wallDensity * 1.0) : 0;
       const aw = p1Total > p2Total ? 0.65 : p2Total > p1Total ? 0.35 : 0.5;
-      return (aw * agg + (1-aw) * ctl) * 2 + p2Space * 2 - p1Opps * 0.3 + fillB + wallBonusVal;
+      return (aw * agg + (1-aw) * ctl) * 2 + p2Space * 2 - p1Opps * 0.3 + fillB + wallBonusVal
+        + turn1FrontierBonus * 0.7 + turn2Bonus * 0.8;
     }
 
     // ── Lv4：先読み ───────────────────────────────────────────────────────────
     case 4: {
-      // 敵侵入路封鎖 + SP保護 + 将来スペース最大化
       const routeBlock  = p1AdjSP * 4;
       const fillB       = isMid ? (newCells * 1.5 + wallDensity * 1.0) : 0;
       const base        = adjToP1 * 2 + newCells * 2 + newSP * 5 + p1SPKilled * 6
                           + routeBlock - p1Opps * 1.5;
-      return base + p2Space * 3 + fillB + wallBonusVal + innerWallVal;
+      return base + p2Space * 3 + fillB + wallBonusVal + innerWallVal
+        + turn1FrontierBonus * 0.6 + turn2Bonus * 0.9;
     }
   }
 }

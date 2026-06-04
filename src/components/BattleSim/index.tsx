@@ -105,6 +105,9 @@ export function BattleSim() {
   // 配置済みカード履歴（ターン毎に蓄積）
   const [p1Placed, setP1Placed] = useState<Array<{cardId: string; isSA: boolean}>>([]);
   const [p2Placed, setP2Placed] = useState<Array<{cardId: string; isSA: boolean}>>([]);
+  // 残りデッキ表示切り替え
+  const [showP1Pile, setShowP1Pile] = useState(false);
+  const [showP2Pile, setShowP2Pile] = useState(false);
 
   // ── UI状態 ────────────────────────────────────────────────────────────────
   const [p1Sel,     setP1Sel]     = useState<string | null>(null);
@@ -140,6 +143,8 @@ export function BattleSim() {
     return {
       p1StartRow: stage.p1Start[1],
       p2StartRow: stage.p2Start[1],
+      p1StartCol: stage.p1Start[0],
+      p2StartCol: stage.p2Start[0],
       rows: stage.height,
       cols: stage.width,
     };
@@ -551,9 +556,12 @@ export function BattleSim() {
         const cell = grid[r]?.[c] ?? 'E';
         ctx.fillStyle = CELL_COLOR[cell] ?? '#2a2a2a';
         ctx.fillRect(c*cellSize, r*cellSize, cellSize, cellSize);
-        ctx.strokeStyle = '#444';
-        ctx.lineWidth = 0.5;
-        ctx.strokeRect(c*cellSize, r*cellSize, cellSize, cellSize);
+        // 壁・障害物マスはグリッド線を描かない（試し置きモードと統一）
+        if (cell !== 'W' && cell !== 'B' && cell !== 'blocked') {
+          ctx.strokeStyle = '#444';
+          ctx.lineWidth = 0.5;
+          ctx.strokeRect(c*cellSize, r*cellSize, cellSize, cellSize);
+        }
       }
     }
 
@@ -579,22 +587,39 @@ export function BattleSim() {
       }
     }
 
-    // 仮配置ハイライト（有効=通常色 / 無効=赤）
+    // 仮配置ハイライト（有効=通常色 / 無効=赤）、SPマスは専用色で強調
     if (pending) {
       const card = cardMap.get(pending.cardId);
       if (card?.shape) {
         const shape = rotateShape(card.shape, pending.rotation);
-        if (pending.isValid) {
-          ctx.fillStyle   = pending.player === 'p1' ? 'rgba(255,180,0,0.65)' : 'rgba(0,150,255,0.65)';
-          ctx.strokeStyle = pending.player === 'p1' ? '#ffaa00' : '#00aaff';
-        } else {
-          ctx.fillStyle   = 'rgba(220,40,40,0.55)';
-          ctx.strokeStyle = '#ff4444';
+        // SPマス位置を回転に合わせて計算
+        const origRows = card.shape.length, origCols = card.shape[0]?.length ?? 0;
+        let rotSP: [number,number] | null = null;
+        if (card.specialPos) {
+          const [sr, sc] = card.specialPos;
+          switch (pending.rotation) {
+            case 0:   rotSP = [sr, sc]; break;
+            case 90:  rotSP = [sc, origRows-1-sr]; break;
+            case 180: rotSP = [origRows-1-sr, origCols-1-sc]; break;
+            case 270: rotSP = [origCols-1-sc, sr]; break;
+          }
         }
         ctx.lineWidth = 2;
         for (let r = 0; r < shape.length; r++)
           for (let c = 0; c < (shape[r]?.length ?? 0); c++)
             if (shape[r][c]) {
+              const isSPCell = rotSP && rotSP[0] === r && rotSP[1] === c;
+              if (isSPCell) {
+                // SPマスは強調色
+                ctx.fillStyle = pending.player === 'p1' ? 'rgba(255,69,0,0.85)' : 'rgba(0,170,255,0.85)';
+                ctx.strokeStyle = pending.player === 'p1' ? '#ff4500' : '#00ccff';
+              } else if (pending.isValid) {
+                ctx.fillStyle   = pending.player === 'p1' ? 'rgba(255,180,0,0.65)' : 'rgba(0,150,255,0.65)';
+                ctx.strokeStyle = pending.player === 'p1' ? '#ffaa00' : '#00aaff';
+              } else {
+                ctx.fillStyle   = 'rgba(220,40,40,0.55)';
+                ctx.strokeStyle = '#ff4444';
+              }
               ctx.fillRect((pending.x+c)*cellSize, (pending.y+r)*cellSize, cellSize, cellSize);
               ctx.strokeRect((pending.x+c)*cellSize+1, (pending.y+r)*cellSize+1, cellSize-2, cellSize-2);
             }
@@ -883,14 +908,6 @@ export function BattleSim() {
           className={`px-1 py-1 rounded text-xs ${isActive && !pending ? 'bg-gray-700 active:bg-gray-600 text-white' : 'bg-gray-800 text-gray-600 cursor-not-allowed'}`}>
           パス
         </button>
-        {/* 配置予測スコア */}
-        {pendingScore !== null && (
-          <div className={`px-1 py-0.5 rounded text-center text-xs font-bold ${
-            pending?.player === 'p1' ? 'bg-orange-950 text-orange-300' : 'bg-blue-950 text-blue-300'
-          }`}>
-            予測<br/>{pendingScore}マス
-          </div>
-        )}
       </div>
     );
   }
@@ -1056,8 +1073,18 @@ export function BattleSim() {
       {/* ターン・スコア行 */}
       <div className="flex items-center gap-2 px-2 py-0.5">
         <span className="text-xs text-gray-400 font-mono">T{turn}/{MAX_TURNS}</span>
-        <span className="text-orange-400 text-xs font-bold">P1:{p1Score}マス</span>
-        <span className="text-blue-400 text-xs font-bold">{cpuMode ? 'CPU' : 'P2'}:{p2Score}マス</span>
+        <span className="text-orange-400 text-xs font-bold">
+          P1:{p1Score}マス
+          {pendingScore !== null && pending?.player === 'p1' && (
+            <span className="text-yellow-400 ml-0.5">→{pendingScore}</span>
+          )}
+        </span>
+        <span className="text-blue-400 text-xs font-bold">
+          {cpuMode ? 'CPU' : 'P2'}:{p2Score}マス
+          {pendingScore !== null && pending?.player === 'p2' && (
+            <span className="text-yellow-400 ml-0.5">→{pendingScore}</span>
+          )}
+        </span>
         <span className="ml-auto flex items-center gap-2 text-xs">
           {cpuThinking
             ? <span className="text-blue-300 animate-pulse">CPU思考中...</span>
@@ -1148,12 +1175,36 @@ export function BattleSim() {
       <div className="grid grid-cols-4 gap-1">
         {p1Hand.map(id => renderHandCard(id, waitFor === 'p1' && !cpuThinking, true))}
       </div>
-      {/* CPUアナウンス（P1手札の下：ステージと重ならない位置） */}
+      {/* CPUアナウンス */}
       {cpuMessage && (
-        <div className="mt-1.5 px-2 py-1 bg-blue-950 border border-blue-700 rounded text-blue-200 text-xs text-center">
+        <div className="mt-1 px-2 py-1 bg-blue-950 border border-blue-700 rounded text-blue-200 text-xs text-center">
           {cpuMessage}
         </div>
       )}
+      {/* 残りデッキ プルダウン */}
+      <div className="mt-1">
+        <button type="button" style={tap}
+          onClick={() => setShowP1Pile(p => !p)}
+          className="flex items-center gap-1 text-gray-500 hover:text-gray-300 text-xs select-none">
+          <span>{showP1Pile ? '▼' : '▶'}</span>
+          <span>残りデッキ（{p1Pile.length}枚）</span>
+        </button>
+        {showP1Pile && p1Pile.length > 0 && (
+          <div className="mt-1 max-h-28 overflow-y-auto bg-gray-950 rounded p-1">
+            {p1Pile.map((id, i) => {
+              const c = cardMap.get(id);
+              return (
+                <div key={i} className="flex items-center gap-1 py-0.5" style={{ fontSize: '9px' }}>
+                  <span className="text-gray-600 w-4 text-right flex-shrink-0">{i+1}.</span>
+                  <span className="text-gray-300 truncate">{c?.name ?? '?'}</span>
+                  {c?.hasSpecialSquare && <span className="text-red-400 flex-shrink-0">★</span>}
+                  <span className="text-gray-600 flex-shrink-0 ml-auto">{c?.size}m</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 
@@ -1165,6 +1216,30 @@ export function BattleSim() {
       </div>
       <div className="grid grid-cols-4 gap-1">
         {p2Hand.map(id => renderHandCard(id, waitFor === 'p2' && !cpuThinking, false))}
+      </div>
+      {/* 残りデッキ プルダウン */}
+      <div className="mt-1">
+        <button type="button" style={tap}
+          onClick={() => setShowP2Pile(p => !p)}
+          className="flex items-center gap-1 text-gray-500 hover:text-gray-300 text-xs select-none">
+          <span>{showP2Pile ? '▼' : '▶'}</span>
+          <span>残りデッキ（{p2Pile.length}枚）</span>
+        </button>
+        {showP2Pile && p2Pile.length > 0 && (
+          <div className="mt-1 max-h-28 overflow-y-auto bg-gray-950 rounded p-1">
+            {p2Pile.map((id, i) => {
+              const c = cardMap.get(id);
+              return (
+                <div key={i} className="flex items-center gap-1 py-0.5" style={{ fontSize: '9px' }}>
+                  <span className="text-gray-600 w-4 text-right flex-shrink-0">{i+1}.</span>
+                  <span className="text-gray-300 truncate">{c?.name ?? '?'}</span>
+                  {c?.hasSpecialSquare && <span className="text-red-400 flex-shrink-0">★</span>}
+                  <span className="text-gray-600 flex-shrink-0 ml-auto">{c?.size}m</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   ) : null;
