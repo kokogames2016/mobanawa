@@ -1052,17 +1052,19 @@ export function DeckBuilder() {
     </div>
   );
 
-  // ─── Landscape layout ─────────────────────────────────────────────────────────
+  // ─── Landscape layout (2カラム) ───────────────────────────────────────────────
   if (isLandscape) {
     return (
-      <div className="flex flex-col bg-gray-950" style={{ height: '100%' }}>
-        <div className="flex-shrink-0 overflow-y-auto" style={{ height: '35%' }}>
+      <div className="flex flex-row bg-gray-950" style={{ height: '100%' }}>
+        {/* 左カラム：デッキ一覧・作成中デッキ */}
+        <div className="flex flex-col overflow-y-auto border-r border-gray-700" style={{ width: '50%' }}>
           {deckFormBar}
           {myDeckList}
           {sampleDeckList}
           {selectedDeckSlots}
         </div>
-        <div className="flex flex-col overflow-hidden" style={{ height: '65%' }}>
+        {/* 右カラム：カード一覧＋ソートタブ */}
+        <div className="flex flex-col overflow-hidden" style={{ width: '50%' }}>
           {cardGrid}
         </div>
       </div>
@@ -1070,7 +1072,7 @@ export function DeckBuilder() {
   }
 
   return (
-    <div className="flex flex-col bg-gray-950" style={{ height: 'calc(100vh - 60px)' }}>
+    <div className="flex flex-col bg-gray-950" style={{ height: '100%' }}>
       {deckFormBar}
       {myDeckList}
       {sampleDeckList}

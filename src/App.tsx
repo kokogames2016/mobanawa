@@ -4,22 +4,24 @@ import { DeckBuilder } from './components/DeckBuilder';
 import { BoardSim } from './components/BoardSim';
 import { BattleSim } from './components/BattleSim';
 import { DrawSim } from './components/DrawSim';
+import { useIsLandscape } from './hooks/useIsLandscape';
 
 const TABS: { id: AppMode; label: string }[] = [
   { id: 'deckbuilder', label: 'デッキ作成' },
   { id: 'boardsim',   label: '試し置き' },
-  { id: 'battle',     label: '対戦' },
   { id: 'drawsim',    label: 'ドロー' },
+  { id: 'battle',     label: '対戦' },
 ];
 
 function App() {
   const { mode, setMode } = useStore();
+  const isLandscape = useIsLandscape();
 
   return (
     <div className="flex flex-col" style={{ height: '100%', backgroundColor: '#0d1f0d' }}>
       {/* Header / Navigation */}
       <header className="flex-shrink-0 border-b border-gray-700 bg-gray-900">
-        <div className="flex items-center px-2 sm:px-4 h-10 sm:h-14 gap-1 sm:gap-2">
+        <div className={`flex items-center px-2 gap-1 ${isLandscape ? 'h-8' : 'h-10 sm:h-14 sm:px-4 sm:gap-2'}`}>
           <div className="font-bold shrink-0 mr-1 sm:mr-3">
             <span className="text-orange-400 text-sm leading-none">モバナワ</span>
           </div>

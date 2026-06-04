@@ -160,6 +160,8 @@ export function BoardSim() {
   const [p1DeckCardIds, setP1DeckCardIds] = useState<string[]>(() => loadBoardSave()?.p1DeckCardIds ?? []);
   const [p2DeckCardIds, setP2DeckCardIds] = useState<string[]>(() => loadBoardSave()?.p2DeckCardIds ?? []);
   const [showPanel, setShowPanel] = useState(false);
+  // 横画面の設定エリア（初期は非表示）
+  const [showLandscapeSettings, setShowLandscapeSettings] = useState(false);
   const lastTouchRef = useRef<{ x: number; y: number } | null>(null);
   const prevAvailSPRef = useRef<{ p1: number; p2: number }>({ p1: 0, p2: 0 });
   const didRestoreDeckRef = useRef(false);
@@ -1162,119 +1164,126 @@ export function BoardSim() {
       <>
       <div className="flex flex-row overflow-hidden" style={{ height: '100%' }}>
         {styleTag}
-        {/* LEFT 40%: ステージ(canvas) */}
-        <div className="flex flex-col overflow-hidden border-r border-gray-700" style={{ width: '40%' }}>
+        {/* LEFT 58%: ステージ(canvas) + コントロール */}
+        <div className="flex flex-col overflow-hidden border-r border-gray-700" style={{ width: '58%' }}>
           {/* compact status bar */}
-          {gameState && (
-            <div className="flex items-center gap-1 px-1.5 py-0.5 bg-gray-900 border-b border-gray-700 flex-shrink-0 flex-wrap">
+          <div className="flex items-center gap-1 px-1.5 py-0.5 bg-gray-900 border-b border-gray-700 flex-shrink-0 flex-wrap">
+            {gameState && <>
               <span className="text-xs text-gray-400 font-mono">T{Math.min(gameState.turn,12)}/12</span>
               {counts && <><span className="text-orange-400 text-xs font-bold">P1:{counts.p1}</span>{p2Enabled&&<span className="text-blue-400 text-xs font-bold">P2:{counts.p2}</span>}</>}
               {p2Enabled && !gameOver && p1Action!==null && p2Action!==null && (
                 <button onClick={handleConfirm} className="px-1.5 py-0.5 bg-green-700 text-white rounded text-xs font-bold">確定</button>
               )}
-              <div className="ml-auto flex gap-0.5">
-                <button onClick={undo} disabled={!gameState.history.length} className="px-1.5 py-0.5 bg-gray-700 disabled:opacity-40 text-white rounded text-xs">↩</button>
-                <button onClick={resetGame} className="px-1.5 py-0.5 bg-gray-700 text-white rounded text-xs">RST</button>
-              </div>
+            </>}
+            <div className="ml-auto flex gap-0.5">
+              <button onClick={undo} disabled={!gameState?.history.length} className="px-1.5 py-0.5 bg-gray-700 disabled:opacity-40 text-white rounded text-xs">↩</button>
+              <button onClick={resetGame} className="px-1.5 py-0.5 bg-gray-700 text-white rounded text-xs">RST</button>
             </div>
-          )}
+          </div>
           {gameOver && counts && (
-            <div className="p-1.5 bg-gray-800 border-b border-gray-700 text-center flex-shrink-0">
-              <div className="text-white font-bold text-sm">ゲーム終了</div>
-              <div className="flex gap-4 justify-center text-xs">
-                <span className="text-orange-400">P1:{counts.p1}</span>
-                <span className="text-blue-400">P2:{counts.p2}</span>
-              </div>
-              <div className="text-yellow-400 text-xs">{counts.p1>counts.p2?'P1勝利':counts.p2>counts.p1?'P2勝利':'引き分け'}</div>
+            <div className="p-1 bg-gray-800 border-b border-gray-700 text-center flex-shrink-0">
+              <span className="text-white font-bold text-xs mr-2">ゲーム終了</span>
+              <span className="text-orange-400 text-xs">P1:{counts.p1}</span>
+              <span className="text-gray-400 text-xs mx-1">/</span>
+              <span className="text-blue-400 text-xs">P2:{counts.p2}</span>
+              <span className="text-yellow-400 text-xs ml-2">{counts.p1>counts.p2?'P1勝利':counts.p2>counts.p1?'P2勝利':'引き分け'}</span>
             </div>
           )}
           {/* canvas + controls */}
-          <div className="flex flex-1 overflow-hidden">
+          <div className="flex flex-1 min-h-0 overflow-hidden">
             {canvasSection}
             {renderControlsColumn(true)}
           </div>
         </div>
 
-        {/* RIGHT 60%: 設定 + 手札 */}
-        <div className="flex flex-col overflow-hidden" style={{ width: '60%' }}>
-          {/* compact settings always visible */}
-          <div className="flex-shrink-0 bg-gray-900 border-b border-gray-700 px-2 py-1.5 overflow-y-auto" style={{ maxHeight: '44%' }}>
-            {/* stage + start/reset row */}
-            <div className="flex gap-1.5 items-center mb-1.5 flex-wrap">
+        {/* RIGHT 42%: 設定（折りたたみ）+ 手札 */}
+        <div className="flex flex-col overflow-hidden" style={{ width: '42%' }}>
+          {/* 設定ヘッダー行（常時表示の最小コントロール） */}
+          <div className="flex-shrink-0 bg-gray-900 border-b border-gray-700 px-2 py-0.5">
+            <div className="flex items-center gap-1.5">
               <select value={stageId} onChange={e=>setStageId(e.target.value)} disabled={!!gameState}
-                className="flex-1 min-w-0 px-1.5 py-0.5 bg-gray-800 border border-gray-600 rounded text-xs text-white">
+                className="flex-1 min-w-0 px-1 py-0.5 bg-gray-800 border border-gray-600 rounded text-xs text-white">
                 {STAGES.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
               {!gameState
                 ? <button onClick={startGame} className="px-2 py-0.5 bg-orange-600 text-white rounded text-xs font-bold shrink-0">開始</button>
                 : <button onClick={resetGame} className="px-2 py-0.5 bg-gray-700 text-white rounded text-xs shrink-0">RST</button>}
+              <button onClick={() => setShowLandscapeSettings(v => !v)}
+                className="px-1.5 py-0.5 bg-gray-700 text-gray-300 rounded text-xs shrink-0">
+                {showLandscapeSettings ? '▲' : '▼'}
+              </button>
             </div>
-            {/* deck selects (2-step, folder-aware) */}
-            <div className="flex gap-1.5 mb-1">
-              <div className="flex-1 min-w-0">
-                <div className="text-xs text-gray-500 mb-0.5">P1デッキ</div>
-                {renderDeckSelect('p1', p1GroupFilter, setP1GroupFilter, p1DeckId, setP1DeckId, true)}
-              </div>
-              {p2Enabled && (
+          </div>
+
+          {/* 折りたたみ設定エリア */}
+          {showLandscapeSettings && (
+            <div className="flex-shrink-0 bg-gray-900 border-b border-gray-700 px-2 py-1 overflow-y-auto" style={{ maxHeight: '40%' }}>
+              {/* デッキ選択 */}
+              <div className="flex gap-1.5 mb-1">
                 <div className="flex-1 min-w-0">
-                  <div className="text-xs text-gray-500 mb-0.5">P2デッキ</div>
-                  {renderDeckSelect('p2', p2GroupFilter, setP2GroupFilter, p2DeckId, setP2DeckId, true)}
+                  <div className="text-xs text-gray-500 mb-0.5">P1デッキ</div>
+                  {renderDeckSelect('p1', p1GroupFilter, setP1GroupFilter, p1DeckId, setP1DeckId, true)}
+                </div>
+                {p2Enabled && (
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs text-gray-500 mb-0.5">P2デッキ</div>
+                    {renderDeckSelect('p2', p2GroupFilter, setP2GroupFilter, p2DeckId, setP2DeckId, true)}
+                  </div>
+                )}
+              </div>
+              {/* トグル */}
+              <div className="flex gap-3 items-center text-xs mb-1">
+                <label className="flex items-center gap-1 text-gray-400">
+                  <button onClick={()=>!gameState&&setP2Enabled(v=>!v)} disabled={!!gameState}
+                    className={`relative inline-flex w-7 h-4 rounded-full transition-colors ${p2Enabled?'bg-blue-500':'bg-gray-600'} ${gameState?'opacity-50 cursor-not-allowed':'cursor-pointer'}`}>
+                    <span className={`absolute top-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform ${p2Enabled?'translate-x-3':'translate-x-0.5'}`}/>
+                  </button>
+                  P2
+                </label>
+                <label className="flex items-center gap-1 text-gray-400">
+                  <button onClick={()=>setFreePlacement(v=>!v)}
+                    className={`relative inline-flex w-7 h-4 rounded-full transition-colors ${freePlacement?'bg-orange-500':'bg-gray-600'} cursor-pointer`}>
+                    <span className={`absolute top-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform ${freePlacement?'translate-x-3':'translate-x-0.5'}`}/>
+                  </button>
+                  フリー
+                </label>
+              </div>
+              {/* SP表示 */}
+              {(availableSP.p1>0||availableSP.p2>0) && (
+                <div className="flex gap-2 flex-wrap">
+                  {availableSP.p1>0 && (
+                    <div className="flex items-center gap-0.5">
+                      <span className="text-orange-400 text-xs">SP:</span>
+                      <div className="flex gap-0.5 flex-wrap">
+                        {Array.from({length:Math.min(availableSP.p1,8)}).map((_,i)=>(<div key={i} className="flame-p1" style={{width:6,height:6,borderRadius:1}}/>))}
+                        {availableSP.p1>8&&<span className="text-xs text-orange-400">+{availableSP.p1-8}</span>}
+                      </div>
+                    </div>
+                  )}
+                  {p2Enabled&&availableSP.p2>0 && (
+                    <div className="flex items-center gap-0.5">
+                      <span className="text-blue-400 text-xs">P2:</span>
+                      <div className="flex gap-0.5 flex-wrap">
+                        {Array.from({length:Math.min(availableSP.p2,8)}).map((_,i)=>(<div key={i} className="flame-p2" style={{width:6,height:6,borderRadius:1}}/>))}
+                        {availableSP.p2>8&&<span className="text-xs text-blue-400">+{availableSP.p2-8}</span>}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
-            {/* toggles row */}
-            <div className="flex gap-3 items-center text-xs">
-              <label className="flex items-center gap-1 text-gray-400">
-                <button onClick={()=>!gameState&&setP2Enabled(v=>!v)} disabled={!!gameState}
-                  className={`relative inline-flex w-8 h-4 rounded-full transition-colors ${p2Enabled?'bg-blue-500':'bg-gray-600'} ${gameState?'opacity-50 cursor-not-allowed':'cursor-pointer'}`}>
-                  <span className={`absolute top-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform ${p2Enabled?'translate-x-4':'translate-x-0.5'}`}/>
-                </button>
-                P2
-              </label>
-              <label className="flex items-center gap-1 text-gray-400">
-                <button onClick={()=>setFreePlacement(v=>!v)}
-                  className={`relative inline-flex w-8 h-4 rounded-full transition-colors ${freePlacement?'bg-orange-500':'bg-gray-600'} cursor-pointer`}>
-                  <span className={`absolute top-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform ${freePlacement?'translate-x-4':'translate-x-0.5'}`}/>
-                </button>
-                フリー
-              </label>
-            </div>
-            {/* SP display */}
-            {(availableSP.p1>0||availableSP.p2>0) && (
-              <div className="mt-1 flex gap-3 flex-wrap">
-                {availableSP.p1>0 && (
-                  <div className="flex items-center gap-0.5">
-                    <span className="text-orange-400 text-xs">SP:</span>
-                    <div className="flex gap-0.5 flex-wrap">
-                      {Array.from({length:Math.min(availableSP.p1,10)}).map((_,i)=>(
-                        <div key={i} className="flame-p1" style={{width:7,height:7,borderRadius:1}}/>
-                      ))}
-                      {availableSP.p1>10&&<span className="text-xs text-orange-400">+{availableSP.p1-10}</span>}
-                    </div>
-                  </div>
-                )}
-                {p2Enabled&&availableSP.p2>0 && (
-                  <div className="flex items-center gap-0.5">
-                    <span className="text-blue-400 text-xs">P2SP:</span>
-                    <div className="flex gap-0.5 flex-wrap">
-                      {Array.from({length:Math.min(availableSP.p2,10)}).map((_,i)=>(
-                        <div key={i} className="flame-p2" style={{width:7,height:7,borderRadius:1}}/>
-                      ))}
-                      {availableSP.p2>10&&<span className="text-xs text-blue-400">+{availableSP.p2-10}</span>}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-          {/* hand / placeholder */}
+          )}
+
+          {/* 手札エリア（設定が閉じているほど広くなる） */}
           {gameState && !gameOver ? (
             <div className={`flex-1 min-h-0 overflow-hidden p-1 bg-gray-900 grid gap-1 ${p2Enabled?'grid-cols-2':'grid-cols-1'}`}>
               {renderHand('p1')}
               {p2Enabled&&renderHand('p2')}
             </div>
           ) : !gameState ? (
-            <div className="flex-1 flex items-center justify-center text-gray-600 text-xs">設定してゲームを開始してください</div>
+            <div className="flex-1 flex items-center justify-center text-gray-600 text-xs px-2 text-center">
+              ▼を押して設定し、開始してください
+            </div>
           ) : null}
         </div>
       </div>
