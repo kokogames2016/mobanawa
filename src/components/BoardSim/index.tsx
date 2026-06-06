@@ -443,7 +443,13 @@ export function BoardSim() {
 
   function handleP2Pass() {
     playPass();
-    setP2Action('pass');
+    // P1がすでに行動済みなら即時ターン確定
+    if (p1Action !== null) {
+      confirmTurn(p1Action, 'pass');
+    } else {
+      setP2Action('pass');
+      setActivePlayer('p1');
+    }
   }
 
   function handleCanvasClick(e: React.MouseEvent<HTMLCanvasElement>) {
@@ -548,8 +554,15 @@ export function BoardSim() {
         setActivePlayer('p2');
       }
     } else {
-      setP2Action(action);
       setP2SAMode(false);
+      // P2配置確定時: P1がすでに行動済みなら即時ターン確定
+      if (p1Action !== null) {
+        confirmTurn(p1Action, action);
+      } else {
+        // P2が先に配置した場合（フリー操作）はP2アクションを記録してP1待ち
+        setP2Action(action);
+        setActivePlayer('p1');
+      }
     }
   }
 
@@ -612,8 +625,8 @@ export function BoardSim() {
         const cell = grid[r][c];
         ctx.fillStyle = CELL_COLORS[cell];
         ctx.fillRect(c * cellSize, r * cellSize, cellSize, cellSize);
-        // No grid lines on wall cells or SP cells — pure solid fill (matches CardShape rendering)
-        if (cell !== 'W' && cell !== 'p1_sp' && cell !== 'p2_sp') {
+        // No grid lines on wall cells — but DO draw lines on SP cells to show cell boundaries
+        if (cell !== 'W') {
           ctx.strokeStyle = '#111';
           ctx.lineWidth = 0.5;
           ctx.strokeRect(c * cellSize, r * cellSize, cellSize, cellSize);
@@ -1171,9 +1184,6 @@ export function BoardSim() {
             {gameState && <>
               <span className="text-xs text-gray-400 font-mono">T{Math.min(gameState.turn,12)}/12</span>
               {counts && <><span className="text-orange-400 text-xs font-bold">P1:{counts.p1}</span>{p2Enabled&&<span className="text-blue-400 text-xs font-bold">P2:{counts.p2}</span>}</>}
-              {p2Enabled && !gameOver && p1Action!==null && p2Action!==null && (
-                <button onClick={handleConfirm} className="px-1.5 py-0.5 bg-green-700 text-white rounded text-xs font-bold">確定</button>
-              )}
             </>}
             <div className="ml-auto flex gap-0.5">
               <button onClick={undo} disabled={!gameState?.history.length} className="px-1.5 py-0.5 bg-gray-700 disabled:opacity-40 text-white rounded text-xs">↩</button>
@@ -1467,13 +1477,7 @@ export function BoardSim() {
                 {p2Enabled && <span className="text-blue-400 text-xs font-bold">P2:{counts.p2}</span>}
               </>
             )}
-            {p2Enabled && !gameOver && p1Action !== null && p2Action !== null && (
-              <button
-                onClick={handleConfirm}
-                className="px-2 py-0.5 bg-green-700 hover:bg-green-600 text-white rounded text-xs font-bold"
-              >確定</button>
-            )}
-            {p2Enabled && !gameOver && (p1Action === null || p2Action === null) && (
+            {p2Enabled && !gameOver && (
               <span className="text-gray-500 text-xs">
                 {p1Action === null ? 'P1選択中' : 'P2選択中'}
               </span>
@@ -1495,20 +1499,32 @@ export function BoardSim() {
             <div className="w-20 flex-shrink-0 border-r border-gray-700 bg-gray-950 p-1 flex flex-col gap-0.5">
               {placedP1.length > 0 && (
                 <div>
-                  <div className="text-xs text-orange-400 font-bold mb-0.5">P1({placedP1.length})</div>
-                  {placedP1.map(({ cardId, turn, isSA }) => {
-                    const c = getCard(cardId);
-                    return <div key={`${cardId}-${turn}`} className="text-xs text-gray-400 truncate leading-tight">{c?.name ?? cardId}{isSA ? ' (SA)' : ''}</div>;
-                  })}
+                  {/* 1P操作時は直近12枚、2P操作時は直近6枚ずつ */}
+                  {(() => {
+                    const limit = p2Enabled ? 6 : 12;
+                    const shown = placedP1.slice(-limit);
+                    return <>
+                      <div className="text-xs text-orange-400 font-bold mb-0.5">P1({placedP1.length})</div>
+                      {shown.map(({ cardId, turn, isSA }) => {
+                        const c = getCard(cardId);
+                        return <div key={`${cardId}-${turn}`} className="text-xs text-gray-400 truncate leading-tight">{c?.name ?? cardId}{isSA ? ' (SA)' : ''}</div>;
+                      })}
+                    </>;
+                  })()}
                 </div>
               )}
               {p2Enabled && placedP2.length > 0 && (
                 <div className="mt-1">
-                  <div className="text-xs text-blue-400 font-bold mb-0.5">P2({placedP2.length})</div>
-                  {placedP2.map(({ cardId, turn, isSA }) => {
-                    const c = getCard(cardId);
-                    return <div key={`${cardId}-${turn}`} className="text-xs text-gray-400 truncate leading-tight">{c?.name ?? cardId}{isSA ? ' (SA)' : ''}</div>;
-                  })}
+                  {(() => {
+                    const shown = placedP2.slice(-6);
+                    return <>
+                      <div className="text-xs text-blue-400 font-bold mb-0.5">P2({placedP2.length})</div>
+                      {shown.map(({ cardId, turn, isSA }) => {
+                        const c = getCard(cardId);
+                        return <div key={`${cardId}-${turn}`} className="text-xs text-gray-400 truncate leading-tight">{c?.name ?? cardId}{isSA ? ' (SA)' : ''}</div>;
+                      })}
+                    </>;
+                  })()}
                 </div>
               )}
               {placedP1.length > 0 && (

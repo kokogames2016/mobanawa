@@ -1,3 +1,4 @@
+import { useState, useEffect, useRef } from 'react';
 import { useStore } from './store';
 import type { AppMode } from './types';
 import { DeckBuilder } from './components/DeckBuilder';
@@ -16,6 +17,19 @@ const TABS: { id: AppMode; label: string }[] = [
 function App() {
   const { mode, setMode } = useStore();
   const isLandscape = useIsLandscape();
+  const [footerVisible, setFooterVisible] = useState(false);
+  const footerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isFirstRender = useRef(true);
+
+  useEffect(() => {
+    if (isFirstRender.current) { isFirstRender.current = false; return; }
+    // タブ切り替え時にフッターを表示し、3秒後にフェードアウト
+    setFooterVisible(true);
+    if (footerTimerRef.current) clearTimeout(footerTimerRef.current);
+    footerTimerRef.current = setTimeout(() => setFooterVisible(false), 3000);
+    return () => { if (footerTimerRef.current) clearTimeout(footerTimerRef.current); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
 
   return (
     <div className="flex flex-col" style={{ height: '100%', backgroundColor: '#0d1f0d' }}>
@@ -51,8 +65,11 @@ function App() {
         {mode === 'drawsim'    && <DrawSim />}
       </main>
 
-      {/* Footer — 免責事項 */}
-      <footer className="flex-shrink-0 bg-gray-950 border-t border-gray-800 px-3 py-1 flex items-center justify-center">
+      {/* Footer — 免責事項（タブ切り替え時のみ表示、3秒でフェードアウト） */}
+      <footer
+        className="flex-shrink-0 bg-gray-950 border-t border-gray-800 px-3 py-1 flex items-center justify-center transition-opacity duration-700"
+        style={{ opacity: footerVisible ? 1 : 0, pointerEvents: 'none', height: '20px' }}
+      >
         <p className="text-gray-600 text-center leading-tight" style={{ fontSize: '10px' }}>
           非公式ファンアプリ — 任天堂株式会社とは無関係です。ナワバトラー・スプラトゥーンは任天堂株式会社の登録商標です。
         </p>
