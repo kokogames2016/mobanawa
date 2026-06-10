@@ -1031,12 +1031,14 @@ export function DeckBuilder() {
         )}
       </div>
       <div className="flex-1 overflow-y-auto p-1">
-        <div className="grid gap-0.5" style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${30 + cardCellSize * 10}px, 1fr))` }}>
+        <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${cardCellSize * 10}px, 1fr))` }}>
           {sortedCards.map(card => {
             const inDeck = mainIds.includes(card.id) || reserveIds.includes(card.id);
             const full   = totalCards >= 21;
             const disabled = inDeck || full;
-            const nameFontSize = `${6 + cardCellSize}px`;
+            // カード名は優先的に大きく表示するため cellSize が大きいほどフォントも拡大
+            const nameFontSize = `${6 + cardCellSize * 0.8}px`;
+            const infoFontSize = `${5 + cardCellSize * 0.5}px`;
             return (
               <button key={card.id} type="button" disabled={disabled} onClick={() => addCard(card)}
                 style={{ touchAction: 'manipulation', cursor: disabled ? 'not-allowed' : 'pointer' }}
@@ -1045,13 +1047,12 @@ export function DeckBuilder() {
                     ? 'border-gray-700 bg-gray-900 opacity-35'
                     : 'border-gray-700 bg-gray-800 active:border-orange-500 active:bg-gray-700'
                 }`}>
-                <div className="flex items-start gap-0.5">
-                  <div className="shrink-0">
-                    <CardShape shape={card.shape} specialPos={card.specialPos} cellSize={cardCellSize} p1Color="#FFE000" spColor="#FF4500" />
-                  </div>
-                  <div className="min-w-0 flex-1 overflow-hidden">
-                    <div className="text-white truncate leading-tight" style={{ fontSize: nameFontSize }}>{card.name}</div>
-                    <div className="text-gray-500 leading-tight" style={{ fontSize: nameFontSize }}>
+                {/* 縦レイアウト: カード形状の下にカード名 */}
+                <div className="flex flex-col items-center">
+                  <CardShape shape={card.shape} specialPos={card.specialPos} cellSize={cardCellSize} p1Color="#FFE000" spColor="#FF4500" />
+                  <div className="w-full mt-0.5 overflow-hidden">
+                    <div className="text-white truncate leading-tight text-center" style={{ fontSize: nameFontSize }}>{card.name}</div>
+                    <div className="text-gray-500 leading-tight text-center" style={{ fontSize: infoFontSize }}>
                       {card.size}m{card.spp > 0 ? ` S${card.spp}` : ''}
                     </div>
                   </div>

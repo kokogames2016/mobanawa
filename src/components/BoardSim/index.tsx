@@ -55,6 +55,8 @@ interface BoardSave {
   gameOver: boolean;
   p1DeckCardIds?: string[];
   p2DeckCardIds?: string[];
+  p1ReserveCardIds?: string[];
+  p2ReserveCardIds?: string[];
   gs: {
     grid: string;
     turn: number;
@@ -160,6 +162,8 @@ export function BoardSim() {
   // Card IDs that belong to the selected deck (for visual grouping in hand)
   const [p1DeckCardIds, setP1DeckCardIds] = useState<string[]>(() => loadBoardSave()?.p1DeckCardIds ?? []);
   const [p2DeckCardIds, setP2DeckCardIds] = useState<string[]>(() => loadBoardSave()?.p2DeckCardIds ?? []);
+  const [p1ReserveCardIds, setP1ReserveCardIds] = useState<string[]>(() => loadBoardSave()?.p1ReserveCardIds ?? []);
+  const [p2ReserveCardIds, setP2ReserveCardIds] = useState<string[]>(() => loadBoardSave()?.p2ReserveCardIds ?? []);
   const [showPanel, setShowPanel] = useState(false);
   // 横画面の設定エリア（初期は非表示）
   const [showLandscapeSettings, setShowLandscapeSettings] = useState(false);
@@ -191,7 +195,9 @@ export function BoardSim() {
         gameOver,
         p1DeckCardIds,
         p2DeckCardIds,
-        gs: gameState ? {
+        p1ReserveCardIds,
+      p2ReserveCardIds,
+      gs: gameState ? {
           ...gameState,
           grid: encodeGrid(gameState.grid),
           history: gameState.history.map(h => ({
@@ -204,7 +210,7 @@ export function BoardSim() {
     } catch (e) {
       console.warn('BoardSim: save failed', e);
     }
-  }, [stageId, p1DeckId, p2DeckId, p2Enabled, freePlacement, gameOver, gameState, p1DeckCardIds, p2DeckCardIds]);
+  }, [stageId, p1DeckId, p2DeckId, p2Enabled, freePlacement, gameOver, gameState, p1DeckCardIds, p2DeckCardIds, p1ReserveCardIds, p2ReserveCardIds]);
 
   // 横画面になったら設定パネルを自動で閉じる
   useEffect(() => {
@@ -281,6 +287,8 @@ export function BoardSim() {
     const p2DeckIds = p2Enabled && p2DeckData ? [...p2DeckData.cardIds] : [];
     setP1DeckCardIds(p1DeckIds);
     setP2DeckCardIds(p2DeckIds);
+    setP1ReserveCardIds(p1DeckData?.reserveCardIds ?? []);
+    setP2ReserveCardIds(p2Enabled && p2DeckData ? (p2DeckData.reserveCardIds ?? []) : []);
     const p1HandIds = allCardIds;
     const p2HandIds = p2Enabled ? allCardIds : [];
 
@@ -320,6 +328,8 @@ export function BoardSim() {
     setActivePlayer('p1');
     setP1DeckCardIds([]);
     setP2DeckCardIds([]);
+    setP1ReserveCardIds([]);
+    setP2ReserveCardIds([]);
     prevAvailSPRef.current = { p1: 0, p2: 0 };
   }
 
@@ -760,6 +770,7 @@ export function BoardSim() {
 
     // Deck card grouping
     const deckCardSet = new Set(player === 'p1' ? p1DeckCardIds : p2DeckCardIds);
+    const reserveSet  = new Set(player === 'p1' ? p1ReserveCardIds : p2ReserveCardIds);
     const hasDeckFilter = deckCardSet.size > 0;
 
     // Sort function
@@ -775,19 +786,27 @@ export function BoardSim() {
       return handSortAsc ? cmp : -cmp;
     };
 
-    // Split into deck cards and others.
-    // Deck cards preserve slot order (1-15) as registered; others are sorted by sortFn.
+    // Split into deck / reserve / others.
     const allIds = rawHand ?? [];
-    const deckCardOrder = player === 'p1' ? p1DeckCardIds : p2DeckCardIds;
-    const deckGroupIds  = hasDeckFilter
-      ? deckCardOrder.filter(id => allIds.includes(id))   // preserve deck slot order
+    const deckCardOrder    = player === 'p1' ? p1DeckCardIds : p2DeckCardIds;
+    const reserveCardOrder = player === 'p1' ? p1ReserveCardIds : p2ReserveCardIds;
+    const deckGroupIds    = hasDeckFilter
+      ? deckCardOrder.filter(id => allIds.includes(id))
       : [];
+    const reserveGroupIds = hasDeckFilter
+      ? reserveCardOrder.filter(id => allIds.includes(id))
+      : [];
+    const knownIds = new Set([...deckCardSet, ...reserveSet]);
     const otherGroupIds = hasDeckFilter
-      ? [...allIds].filter(id => !deckCardSet.has(id)).sort(sortFn)
+      ? [...allIds].filter(id => !knownIds.has(id)).sort(sortFn)
       : [...allIds].sort(sortFn);
 
+    // card size from slider
+    const scaledCellSize = Math.max(2, Math.round(3 * placedCardFontScale));
+    const scaledFontSize = `${Math.round(9 * placedCardFontScale)}px`;
+
     // Single card button factory
-    const makeCardBtn = (id: string, inDeck: boolean) => {
+    const makeCardBtn = (id: string, inDeck: boolean, isReserve = false) => {
       const card = getCard(id);
       const isSelected = selected === id;
       const isConfirmed = action !== null && action !== 'pass' && action.cardId === id;
@@ -806,18 +825,20 @@ export function BoardSim() {
             isSelected && isSAMode ? 'border-red-500 bg-red-950' :
             isSelected && player === 'p1' ? 'border-orange-500 bg-orange-950' :
             isSelected ? 'border-blue-500 bg-blue-950' :
-            inDeck
-              ? (player === 'p1' ? 'border-yellow-700/60 bg-gray-800 hover:border-yellow-500' : 'border-blue-700/60 bg-gray-800 hover:border-blue-400')
-              : 'border-gray-600 bg-gray-800 hover:border-gray-400'
+            isReserve
+              ? (player === 'p1' ? 'border-yellow-800/40 bg-gray-800/70 hover:border-yellow-600' : 'border-blue-800/40 bg-gray-800/70 hover:border-blue-500')
+              : inDeck
+                ? (player === 'p1' ? 'border-yellow-700/60 bg-gray-800 hover:border-yellow-500' : 'border-blue-700/60 bg-gray-800 hover:border-blue-400')
+                : 'border-gray-600 bg-gray-800 hover:border-gray-400'
           }`}
         >
           {card ? (
             <div>
-              <CardShape shape={card.shape} specialPos={card.specialPos} cellSize={3}
+              <CardShape shape={card.shape} specialPos={card.specialPos} cellSize={scaledCellSize}
                 p1Color={player === 'p1' ? '#FFE000' : '#0044FF'}
                 spColor={player === 'p1' ? '#FF4500' : '#00CCFF'} />
-              <div className="text-gray-400 mt-0.5 truncate w-10 leading-tight" style={{ fontSize: '9px' }}>{card.name}</div>
-              <div className="text-gray-600" style={{ fontSize: '9px' }}>{card.size}m{card.spp > 0 ? ` S${card.spp}` : ''}</div>
+              <div className="text-gray-400 mt-0.5 truncate leading-tight" style={{ fontSize: scaledFontSize, maxWidth: `${scaledCellSize * 12}px` }}>{card.name}</div>
+              <div className="text-gray-600 leading-tight" style={{ fontSize: scaledFontSize }}>{card.size}m{card.spp > 0 ? ` S${card.spp}` : ''}</div>
             </div>
           ) : <span className="text-gray-600">?</span>}
         </button>
@@ -862,7 +883,7 @@ export function BoardSim() {
           </div>
         </div>
 
-        {/* Card grid — deck cards first (slot order), then all others (sorted) */}
+        {/* Card grid — deck cards first (slot order), then reserve, then all others (sorted) */}
         <div className="flex flex-wrap gap-1 mb-1 flex-1 min-h-0 overflow-y-auto" style={{ alignContent: 'flex-start' }}>
           {hasDeckFilter && (
             <div className="w-full text-xs font-bold pb-0.5" style={{ color: player === 'p1' ? '#d97706' : '#3b82f6' }}>
@@ -870,6 +891,12 @@ export function BoardSim() {
             </div>
           )}
           {deckGroupIds.map(id => makeCardBtn(id, true))}
+          {hasDeckFilter && reserveGroupIds.length > 0 && (
+            <div className="w-full border-t border-gray-700 pt-1 mt-0.5 text-xs text-gray-500">
+              予備（{reserveGroupIds.length}枚）
+            </div>
+          )}
+          {reserveGroupIds.map(id => makeCardBtn(id, false, true))}
           {hasDeckFilter && (
             <div className="w-full border-t border-gray-700 pt-1 mt-0.5 text-xs text-gray-500">
               全カード（{otherGroupIds.length}枚）
@@ -1480,14 +1507,26 @@ export function BoardSim() {
             <span className="text-xs text-gray-400 font-mono">T{Math.min(gameState.turn, 12)}/12</span>
             {counts && (
               <>
-                <span className="text-orange-400 text-xs font-bold">
-                  P1:{counts.p1}{IS_TOUCH && availableSP.p1 > 0 ? <span className="text-yellow-300 font-normal ml-0.5">⚡{availableSP.p1}</span> : null}
-                </span>
-                {p2Enabled && (
-                  <span className="text-blue-400 text-xs font-bold">
-                    P2:{counts.p2}{IS_TOUCH && availableSP.p2 > 0 ? <span className="text-yellow-300 font-normal ml-0.5">⚡{availableSP.p2}</span> : null}
-                  </span>
+                <span className="text-orange-400 text-xs font-bold">P1:{counts.p1}</span>
+                {IS_TOUCH && availableSP.p1 > 0 && (
+                  <div className="flex gap-0.5 items-center">
+                    {Array.from({ length: Math.min(availableSP.p1, 6) }).map((_, i) => (
+                      <div key={i} className="flame-p1" style={{ width: 7, height: 7, borderRadius: 1 }} />
+                    ))}
+                    {availableSP.p1 > 6 && <span className="text-orange-400 text-xs">+{availableSP.p1 - 6}</span>}
+                  </div>
                 )}
+                {p2Enabled && <>
+                  <span className="text-blue-400 text-xs font-bold">P2:{counts.p2}</span>
+                  {IS_TOUCH && availableSP.p2 > 0 && (
+                    <div className="flex gap-0.5 items-center">
+                      {Array.from({ length: Math.min(availableSP.p2, 6) }).map((_, i) => (
+                        <div key={i} className="flame-p2" style={{ width: 7, height: 7, borderRadius: 1 }} />
+                      ))}
+                      {availableSP.p2 > 6 && <span className="text-blue-400 text-xs">+{availableSP.p2 - 6}</span>}
+                    </div>
+                  )}
+                </>}
               </>
             )}
             {p2Enabled && !gameOver && (
