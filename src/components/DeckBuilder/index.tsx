@@ -2,7 +2,7 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import { useStore, isSampleDeck } from '../../store';
 import type { Card, Deck, DeckFolder, Rarity } from '../../types';
 import { CardShape } from '../common/CardShape';
-import { useIsLandscape } from '../../hooks/useIsLandscape';
+import { useIsLandscape, IS_TOUCH } from '../../hooks/useIsLandscape';
 
 type SortKey = 'id' | 'size' | 'rarity' | 'name';
 
@@ -43,6 +43,7 @@ export function DeckBuilder() {
 
   const [sortKey, setSortKey] = useState<SortKey>('id');
   const [sortAsc, setSortAsc] = useState(true);
+  const [cardCellSize, setCardCellSize] = useState(3);
   const [deckName, setDeckName] = useState('新しいデッキ');
   const [saveFlash, setSaveFlash] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -1018,13 +1019,24 @@ export function DeckBuilder() {
           );
         })}
         <span className="text-xs text-gray-600 ml-auto">{sortedCards.length}枚</span>
+        {!IS_TOUCH && (
+          <div className="flex items-center gap-1 ml-2 shrink-0">
+            <span className="text-xs text-gray-500 whitespace-nowrap">カードサイズ</span>
+            <input
+              type="range" min={2} max={6} step={1} value={cardCellSize}
+              onChange={e => setCardCellSize(Number(e.target.value))}
+              className="w-20"
+            />
+          </div>
+        )}
       </div>
       <div className="flex-1 overflow-y-auto p-1">
-        <div className="grid gap-0.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(60px, 1fr))' }}>
+        <div className="grid gap-0.5" style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${30 + cardCellSize * 10}px, 1fr))` }}>
           {sortedCards.map(card => {
             const inDeck = mainIds.includes(card.id) || reserveIds.includes(card.id);
             const full   = totalCards >= 21;
             const disabled = inDeck || full;
+            const nameFontSize = `${6 + cardCellSize}px`;
             return (
               <button key={card.id} type="button" disabled={disabled} onClick={() => addCard(card)}
                 style={{ touchAction: 'manipulation', cursor: disabled ? 'not-allowed' : 'pointer' }}
@@ -1035,11 +1047,11 @@ export function DeckBuilder() {
                 }`}>
                 <div className="flex items-start gap-0.5">
                   <div className="shrink-0">
-                    <CardShape shape={card.shape} specialPos={card.specialPos} cellSize={3} p1Color="#FFE000" spColor="#FF4500" />
+                    <CardShape shape={card.shape} specialPos={card.specialPos} cellSize={cardCellSize} p1Color="#FFE000" spColor="#FF4500" />
                   </div>
                   <div className="min-w-0 flex-1 overflow-hidden">
-                    <div className="text-white truncate leading-tight" style={{ fontSize: '8px' }}>{card.name}</div>
-                    <div className="text-gray-500 leading-tight" style={{ fontSize: '8px' }}>
+                    <div className="text-white truncate leading-tight" style={{ fontSize: nameFontSize }}>{card.name}</div>
+                    <div className="text-gray-500 leading-tight" style={{ fontSize: nameFontSize }}>
                       {card.size}m{card.spp > 0 ? ` S${card.spp}` : ''}
                     </div>
                   </div>

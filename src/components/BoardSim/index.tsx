@@ -130,6 +130,7 @@ export function BoardSim() {
     return STAGES.find(x => x.id === id) ? id : STAGES[0].id;
   });
   const [cellSize, setCellSize] = useState(12);
+  const [placedCardFontScale, setPlacedCardFontScale] = useState(1.0);
   const [gameState, setGameState] = useState<BoardSimState | null>(() => {
     try {
       const s = loadBoardSave();
@@ -1445,6 +1446,12 @@ export function BoardSim() {
                 onChange={e => setCellSize(Number(e.target.value))}
                 className="w-full mt-1"
               />
+              <div className="mt-1">カードサイズ: {Math.round(placedCardFontScale * 100)}%</div>
+              <input
+                type="range" min={70} max={160} step={5} value={Math.round(placedCardFontScale * 100)}
+                onChange={e => setPlacedCardFontScale(Number(e.target.value) / 100)}
+                className="w-full mt-1"
+              />
             </>
           )}
           {IS_TOUCH && <div className="text-gray-700">タッチ操作</div>}
@@ -1473,8 +1480,14 @@ export function BoardSim() {
             <span className="text-xs text-gray-400 font-mono">T{Math.min(gameState.turn, 12)}/12</span>
             {counts && (
               <>
-                <span className="text-orange-400 text-xs font-bold">P1:{counts.p1}</span>
-                {p2Enabled && <span className="text-blue-400 text-xs font-bold">P2:{counts.p2}</span>}
+                <span className="text-orange-400 text-xs font-bold">
+                  P1:{counts.p1}{IS_TOUCH && availableSP.p1 > 0 ? <span className="text-yellow-300 font-normal ml-0.5">⚡{availableSP.p1}</span> : null}
+                </span>
+                {p2Enabled && (
+                  <span className="text-blue-400 text-xs font-bold">
+                    P2:{counts.p2}{IS_TOUCH && availableSP.p2 > 0 ? <span className="text-yellow-300 font-normal ml-0.5">⚡{availableSP.p2}</span> : null}
+                  </span>
+                )}
               </>
             )}
             {p2Enabled && !gameOver && (
@@ -1507,7 +1520,7 @@ export function BoardSim() {
                       <div className="text-xs text-orange-400 font-bold mb-0.5">P1({placedP1.length})</div>
                       {shown.map(({ cardId, turn, isSA }) => {
                         const c = getCard(cardId);
-                        return <div key={`${cardId}-${turn}`} className="text-xs text-gray-400 truncate leading-tight">{c?.name ?? cardId}{isSA ? ' (SA)' : ''}</div>;
+                        return <div key={`${cardId}-${turn}`} className="text-gray-400 truncate leading-tight" style={{ fontSize: `${9 * placedCardFontScale}px` }}>{c?.name ?? cardId}{isSA ? ' (SA)' : ''}</div>;
                       })}
                     </>;
                   })()}
@@ -1521,7 +1534,7 @@ export function BoardSim() {
                       <div className="text-xs text-blue-400 font-bold mb-0.5">P2({placedP2.length})</div>
                       {shown.map(({ cardId, turn, isSA }) => {
                         const c = getCard(cardId);
-                        return <div key={`${cardId}-${turn}`} className="text-xs text-gray-400 truncate leading-tight">{c?.name ?? cardId}{isSA ? ' (SA)' : ''}</div>;
+                        return <div key={`${cardId}-${turn}`} className="text-gray-400 truncate leading-tight" style={{ fontSize: `${9 * placedCardFontScale}px` }}>{c?.name ?? cardId}{isSA ? ' (SA)' : ''}</div>;
                       })}
                     </>;
                   })()}
