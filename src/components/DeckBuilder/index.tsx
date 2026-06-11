@@ -2,7 +2,7 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import { useStore, isSampleDeck } from '../../store';
 import type { Card, Deck, DeckFolder, Rarity } from '../../types';
 import { CardShape } from '../common/CardShape';
-import { useIsLandscape, IS_TOUCH } from '../../hooks/useIsLandscape';
+import { useIsLandscape } from '../../hooks/useIsLandscape';
 
 type SortKey = 'id' | 'size' | 'rarity' | 'name';
 
@@ -1019,16 +1019,14 @@ export function DeckBuilder() {
           );
         })}
         <span className="text-xs text-gray-600 ml-auto">{sortedCards.length}枚</span>
-        {!IS_TOUCH && (
-          <div className="flex items-center gap-1 ml-2 shrink-0">
-            <span className="text-xs text-gray-500 whitespace-nowrap">カードサイズ</span>
-            <input
-              type="range" min={2} max={6} step={1} value={cardCellSize}
-              onChange={e => setCardCellSize(Number(e.target.value))}
-              className="w-20"
-            />
-          </div>
-        )}
+        <div className="flex items-center gap-1 ml-2 shrink-0">
+          <span className="text-xs text-gray-500 whitespace-nowrap">サイズ</span>
+          <input
+            type="range" min={2} max={6} step={1} value={cardCellSize}
+            onChange={e => setCardCellSize(Number(e.target.value))}
+            className="w-16"
+          />
+        </div>
       </div>
       <div className="flex-1 overflow-y-auto p-1">
         <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${cardCellSize * 10}px, 1fr))` }}>

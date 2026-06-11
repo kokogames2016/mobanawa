@@ -5,6 +5,7 @@ import { DeckBuilder } from './components/DeckBuilder';
 import { BoardSim } from './components/BoardSim';
 import { BattleSim } from './components/BattleSim';
 import { DrawSim } from './components/DrawSim';
+import { Help } from './components/Help';
 import { useIsLandscape } from './hooks/useIsLandscape';
 
 const TABS: { id: AppMode; label: string }[] = [
@@ -12,6 +13,7 @@ const TABS: { id: AppMode; label: string }[] = [
   { id: 'boardsim',   label: '試し置き' },
   { id: 'drawsim',    label: 'ドロー' },
   { id: 'battle',     label: '対戦' },
+  { id: 'help',       label: 'ヘルプ' },
 ];
 
 function App() {
@@ -63,6 +65,7 @@ function App() {
         {mode === 'boardsim'   && <BoardSim />}
         {mode === 'battle'     && <BattleSim />}
         {mode === 'drawsim'    && <DrawSim />}
+        {mode === 'help'       && <Help />}
       </main>
 
       {/* Footer — 免責事項（タブ切り替え時のみ表示、3秒でフェードアウト） */}

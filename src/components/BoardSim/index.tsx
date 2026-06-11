@@ -182,6 +182,23 @@ export function BoardSim() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ゲーム未開始時: デッキ選択が変わったらカードID一覧を即時更新（前回のデッキ情報が残るバグ修正）
+  useEffect(() => {
+    if (gameState) return;
+    const deck = decks.find(d => d.id === p1DeckId);
+    setP1DeckCardIds(deck ? [...deck.cardIds] : []);
+    setP1ReserveCardIds(deck ? (deck.reserveCardIds ?? []) : []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p1DeckId]);
+
+  useEffect(() => {
+    if (gameState) return;
+    const deck = decks.find(d => d.id === p2DeckId);
+    setP2DeckCardIds(deck ? [...deck.cardIds] : []);
+    setP2ReserveCardIds(deck ? (deck.reserveCardIds ?? []) : []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p2DeckId]);
+
   // Persist game state whenever it changes
   useEffect(() => {
     try {
@@ -833,12 +850,14 @@ export function BoardSim() {
           }`}
         >
           {card ? (
-            <div>
-              <CardShape shape={card.shape} specialPos={card.specialPos} cellSize={scaledCellSize}
-                p1Color={player === 'p1' ? '#FFE000' : '#0044FF'}
-                spColor={player === 'p1' ? '#FF4500' : '#00CCFF'} />
-              <div className="text-gray-400 mt-0.5 truncate leading-tight" style={{ fontSize: scaledFontSize, maxWidth: `${scaledCellSize * 12}px` }}>{card.name}</div>
-              <div className="text-gray-600 leading-tight" style={{ fontSize: scaledFontSize }}>{card.size}m{card.spp > 0 ? ` S${card.spp}` : ''}</div>
+            <div style={{ width: `${scaledCellSize * 12}px` }}>
+              <div className="flex justify-center">
+                <CardShape shape={card.shape} specialPos={card.specialPos} cellSize={scaledCellSize}
+                  p1Color={player === 'p1' ? '#FFE000' : '#0044FF'}
+                  spColor={player === 'p1' ? '#FF4500' : '#00CCFF'} />
+              </div>
+              <div className="text-gray-400 mt-0.5 truncate leading-tight text-center" style={{ fontSize: scaledFontSize }}>{card.name}</div>
+              <div className="text-gray-600 leading-tight text-center" style={{ fontSize: scaledFontSize }}>{card.size}m{card.spp > 0 ? ` S${card.spp}` : ''}</div>
             </div>
           ) : <span className="text-gray-600">?</span>}
         </button>
@@ -1292,18 +1311,16 @@ export function BoardSim() {
                   {availableSP.p1>0 && (
                     <div className="flex items-center gap-0.5">
                       <span className="text-orange-400 text-xs">SP:</span>
-                      <div className="flex gap-0.5 flex-wrap">
-                        {Array.from({length:Math.min(availableSP.p1,8)}).map((_,i)=>(<div key={i} className="flame-p1" style={{width:6,height:6,borderRadius:1}}/>))}
-                        {availableSP.p1>8&&<span className="text-xs text-orange-400">+{availableSP.p1-8}</span>}
+                      <div className="flex flex-wrap" style={{ gap: '1px' }}>
+                        {Array.from({length: availableSP.p1}).map((_,i)=>(<div key={i} className="flame-p1" style={{width:6,height:6,borderRadius:1, marginRight: (i+1)%5===0&&i+1<availableSP.p1?3:0}}/>))}
                       </div>
                     </div>
                   )}
                   {p2Enabled&&availableSP.p2>0 && (
                     <div className="flex items-center gap-0.5">
                       <span className="text-blue-400 text-xs">P2:</span>
-                      <div className="flex gap-0.5 flex-wrap">
-                        {Array.from({length:Math.min(availableSP.p2,8)}).map((_,i)=>(<div key={i} className="flame-p2" style={{width:6,height:6,borderRadius:1}}/>))}
-                        {availableSP.p2>8&&<span className="text-xs text-blue-400">+{availableSP.p2-8}</span>}
+                      <div className="flex flex-wrap" style={{ gap: '1px' }}>
+                        {Array.from({length: availableSP.p2}).map((_,i)=>(<div key={i} className="flame-p2" style={{width:6,height:6,borderRadius:1, marginRight: (i+1)%5===0&&i+1<availableSP.p2?3:0}}/>))}
                       </div>
                     </div>
                   )}
@@ -1439,21 +1456,21 @@ export function BoardSim() {
               <div className="mt-2 pt-2 border-t border-gray-700 space-y-1.5">
                 <div className="text-xs text-gray-400">SP（使用可能）</div>
                 {availableSP.p1 > 0 && (
-                  <div className="flex items-center gap-1">
-                    <span className="text-orange-400 text-xs w-6">P1</span>
-                    <div className="flex gap-0.5 flex-wrap">
+                  <div className="flex items-start gap-1">
+                    <span className="text-orange-400 text-xs w-6 shrink-0">P1</span>
+                    <div className="flex flex-wrap" style={{ gap: '2px' }}>
                       {Array.from({ length: availableSP.p1 }).map((_, i) => (
-                        <div key={i} className="flame-p1" style={{ width: 10, height: 10, borderRadius: 2 }} />
+                        <div key={i} className="flame-p1" style={{ width: 10, height: 10, borderRadius: 2, marginRight: (i + 1) % 5 === 0 && i + 1 < availableSP.p1 ? 4 : 0 }} />
                       ))}
                     </div>
                   </div>
                 )}
                 {availableSP.p2 > 0 && (
-                  <div className="flex items-center gap-1">
-                    <span className="text-blue-400 text-xs w-6">P2</span>
-                    <div className="flex gap-0.5 flex-wrap">
+                  <div className="flex items-start gap-1">
+                    <span className="text-blue-400 text-xs w-6 shrink-0">P2</span>
+                    <div className="flex flex-wrap" style={{ gap: '2px' }}>
                       {Array.from({ length: availableSP.p2 }).map((_, i) => (
-                        <div key={i} className="flame-p2" style={{ width: 10, height: 10, borderRadius: 2 }} />
+                        <div key={i} className="flame-p2" style={{ width: 10, height: 10, borderRadius: 2, marginRight: (i + 1) % 5 === 0 && i + 1 < availableSP.p2 ? 4 : 0 }} />
                       ))}
                     </div>
                   </div>
@@ -1465,23 +1482,18 @@ export function BoardSim() {
 
         <div className="text-xs text-gray-600 border-t border-gray-700 pt-2">
           {!IS_TOUCH && <div>X: 右回転 / Y: 左回転</div>}
-          {!IS_TOUCH && (
-            <>
-              <div>ズーム: {cellSize}px/マス</div>
-              <input
-                type="range" min={12} max={40} value={cellSize}
-                onChange={e => setCellSize(Number(e.target.value))}
-                className="w-full mt-1"
-              />
-              <div className="mt-1">カードサイズ: {Math.round(placedCardFontScale * 100)}%</div>
-              <input
-                type="range" min={70} max={160} step={5} value={Math.round(placedCardFontScale * 100)}
-                onChange={e => setPlacedCardFontScale(Number(e.target.value) / 100)}
-                className="w-full mt-1"
-              />
-            </>
-          )}
-          {IS_TOUCH && <div className="text-gray-700">タッチ操作</div>}
+          <div className="mt-1">ズーム: {cellSize}px/マス</div>
+          <input
+            type="range" min={12} max={40} value={cellSize}
+            onChange={e => setCellSize(Number(e.target.value))}
+            className="w-full mt-1"
+          />
+          <div className="mt-1">カードサイズ: {Math.round(placedCardFontScale * 100)}%</div>
+          <input
+            type="range" min={70} max={160} step={5} value={Math.round(placedCardFontScale * 100)}
+            onChange={e => setPlacedCardFontScale(Number(e.target.value) / 100)}
+            className="w-full mt-1"
+          />
         </div>
       </div>
 
@@ -1509,21 +1521,19 @@ export function BoardSim() {
               <>
                 <span className="text-orange-400 text-xs font-bold">P1:{counts.p1}</span>
                 {IS_TOUCH && availableSP.p1 > 0 && (
-                  <div className="flex gap-0.5 items-center">
-                    {Array.from({ length: Math.min(availableSP.p1, 6) }).map((_, i) => (
-                      <div key={i} className="flame-p1" style={{ width: 7, height: 7, borderRadius: 1 }} />
+                  <div className="flex flex-wrap items-center" style={{ gap: '1px' }}>
+                    {Array.from({ length: availableSP.p1 }).map((_, i) => (
+                      <div key={i} className="flame-p1" style={{ width: 7, height: 7, borderRadius: 1, marginRight: (i + 1) % 5 === 0 && i + 1 < availableSP.p1 ? 3 : 0 }} />
                     ))}
-                    {availableSP.p1 > 6 && <span className="text-orange-400 text-xs">+{availableSP.p1 - 6}</span>}
                   </div>
                 )}
                 {p2Enabled && <>
                   <span className="text-blue-400 text-xs font-bold">P2:{counts.p2}</span>
                   {IS_TOUCH && availableSP.p2 > 0 && (
-                    <div className="flex gap-0.5 items-center">
-                      {Array.from({ length: Math.min(availableSP.p2, 6) }).map((_, i) => (
-                        <div key={i} className="flame-p2" style={{ width: 7, height: 7, borderRadius: 1 }} />
+                    <div className="flex flex-wrap items-center" style={{ gap: '1px' }}>
+                      {Array.from({ length: availableSP.p2 }).map((_, i) => (
+                        <div key={i} className="flame-p2" style={{ width: 7, height: 7, borderRadius: 1, marginRight: (i + 1) % 5 === 0 && i + 1 < availableSP.p2 ? 3 : 0 }} />
                       ))}
-                      {availableSP.p2 > 6 && <span className="text-blue-400 text-xs">+{availableSP.p2 - 6}</span>}
                     </div>
                   )}
                 </>}

@@ -83,5 +83,5 @@ export interface BoardState {
   history: TurnRecord[];
 }
 
-export type AppMode = 'deckbuilder' | 'boardsim' | 'battle' | 'drawsim';
+export type AppMode = 'deckbuilder' | 'boardsim' | 'battle' | 'drawsim' | 'help';
 export type CpuLevel = 1 | 2 | 3 | 4;
