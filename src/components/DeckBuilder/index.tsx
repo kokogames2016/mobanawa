@@ -927,14 +927,16 @@ export function DeckBuilder() {
 
   const sampleDeckList = sampleDecks.length > 0 ? (
     <div className="flex-shrink-0 bg-gray-900 border-b border-gray-700 px-2 py-1.5">
-      <button type="button" style={tap} onClick={toggleSampleDeckSection}
-        className="flex items-center gap-1 w-full text-left select-none mb-0.5">
-        <span className="text-xs text-gray-500">{sampleDeckSectionOpen ? '▼' : '▶'}</span>
-        <span className="text-xs text-gray-500 font-bold">📋 サンプルデッキ</span>
-        {!sampleDeckSectionOpen && (
-          <span className="text-xs text-gray-600 ml-1">({sampleDecks.length})</span>
-        )}
-      </button>
+      <div
+        className="flex items-center gap-1 cursor-pointer select-none"
+        style={tap}
+        onClick={toggleSampleDeckSection}
+      >
+        <span className="text-xs text-gray-400 font-bold">
+          📋 サンプルデッキ {sampleDeckSectionOpen ? '▼' : '▶'}
+        </span>
+        <span className="text-xs text-gray-600 ml-0.5">({sampleDecks.length})</span>
+      </div>
       {sampleDeckSectionOpen && (
         <div className="overflow-x-auto">
           <div className="flex gap-1.5" style={{ width: 'max-content' }}>
