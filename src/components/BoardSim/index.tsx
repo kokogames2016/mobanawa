@@ -182,22 +182,23 @@ export function BoardSim() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ゲーム未開始時: デッキ選択が変わったらカードID一覧を即時更新（前回のデッキ情報が残るバグ修正）
+  // ゲーム未開始時: デッキ選択またはゲーム終了(gameState→null)でカードID一覧を即時更新
+  const isGameRunning = !!gameState;
   useEffect(() => {
-    if (gameState) return;
+    if (isGameRunning) return;
     const deck = decks.find(d => d.id === p1DeckId);
     setP1DeckCardIds(deck ? [...deck.cardIds] : []);
     setP1ReserveCardIds(deck ? (deck.reserveCardIds ?? []) : []);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [p1DeckId]);
+  }, [p1DeckId, isGameRunning]);
 
   useEffect(() => {
-    if (gameState) return;
+    if (isGameRunning) return;
     const deck = decks.find(d => d.id === p2DeckId);
     setP2DeckCardIds(deck ? [...deck.cardIds] : []);
     setP2ReserveCardIds(deck ? (deck.reserveCardIds ?? []) : []);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [p2DeckId]);
+  }, [p2DeckId, isGameRunning]);
 
   // Persist game state whenever it changes
   useEffect(() => {
@@ -343,11 +344,8 @@ export function BoardSim() {
     setP1SAMode(false);
     setP2SAMode(false);
     setActivePlayer('p1');
-    setP1DeckCardIds([]);
-    setP2DeckCardIds([]);
-    setP1ReserveCardIds([]);
-    setP2ReserveCardIds([]);
     prevAvailSPRef.current = { p1: 0, p2: 0 };
+    // p1/p2DeckCardIds・ReserveCardIds は isGameRunning→false により useEffect が自動同期
   }
 
   function undo() {
@@ -1452,31 +1450,6 @@ export function BoardSim() {
                 )}
               </div>
             )}
-            {(availableSP.p1 > 0 || availableSP.p2 > 0) && (
-              <div className="mt-2 pt-2 border-t border-gray-700 space-y-1.5">
-                <div className="text-xs text-gray-400">SP（使用可能）</div>
-                {availableSP.p1 > 0 && (
-                  <div className="flex items-start gap-1">
-                    <span className="text-orange-400 text-xs w-6 shrink-0">P1</span>
-                    <div className="flex flex-wrap" style={{ gap: '2px' }}>
-                      {Array.from({ length: availableSP.p1 }).map((_, i) => (
-                        <div key={i} className="flame-p1" style={{ width: 10, height: 10, borderRadius: 2, marginRight: (i + 1) % 5 === 0 && i + 1 < availableSP.p1 ? 4 : 0 }} />
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {availableSP.p2 > 0 && (
-                  <div className="flex items-start gap-1">
-                    <span className="text-blue-400 text-xs w-6 shrink-0">P2</span>
-                    <div className="flex flex-wrap" style={{ gap: '2px' }}>
-                      {Array.from({ length: availableSP.p2 }).map((_, i) => (
-                        <div key={i} className="flame-p2" style={{ width: 10, height: 10, borderRadius: 2, marginRight: (i + 1) % 5 === 0 && i + 1 < availableSP.p2 ? 4 : 0 }} />
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
           </div>
         )}
 
@@ -1520,7 +1493,7 @@ export function BoardSim() {
             {counts && (
               <>
                 <span className="text-orange-400 text-xs font-bold">P1:{counts.p1}</span>
-                {IS_TOUCH && availableSP.p1 > 0 && (
+                {availableSP.p1 > 0 && (
                   <div className="flex flex-wrap items-center" style={{ gap: '1px' }}>
                     {Array.from({ length: availableSP.p1 }).map((_, i) => (
                       <div key={i} className="flame-p1" style={{ width: 7, height: 7, borderRadius: 1, marginRight: (i + 1) % 5 === 0 && i + 1 < availableSP.p1 ? 3 : 0 }} />
@@ -1529,7 +1502,7 @@ export function BoardSim() {
                 )}
                 {p2Enabled && <>
                   <span className="text-blue-400 text-xs font-bold">P2:{counts.p2}</span>
-                  {IS_TOUCH && availableSP.p2 > 0 && (
+                  {availableSP.p2 > 0 && (
                     <div className="flex flex-wrap items-center" style={{ gap: '1px' }}>
                       {Array.from({ length: availableSP.p2 }).map((_, i) => (
                         <div key={i} className="flame-p2" style={{ width: 7, height: 7, borderRadius: 1, marginRight: (i + 1) % 5 === 0 && i + 1 < availableSP.p2 ? 3 : 0 }} />
