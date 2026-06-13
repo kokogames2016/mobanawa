@@ -38,7 +38,7 @@ export function Help() {
         <section>
           <h2 className="text-base font-bold text-orange-400 mb-2">ドロー</h2>
           <ul className="space-y-1 list-disc list-inside text-gray-400">
-            <li>デッキを選択して「開始」で山札をセットします</li>
+            <li>デッキと条件を選択し、チェックボックスをオンにすると「開始」ボタンが押せるようになります。開始を押すと1回分のドローが実行され、繰り返すごとに累積確率が更新されます。</li>
             <li>「引き順を見る」をタップするとスクロールで山札情報を確認できます</li>
             <li>リシャッフル（マリガン）：ゲーム開始後1度だけ手札を引き直しできる機能です。リシャッフルはするかしないかを選べます。</li>
           </ul>
@@ -48,20 +48,21 @@ export function Help() {
           <ul className="space-y-2 text-gray-400">
             <li>
               <span className="text-green-400 font-bold">初手安定率</span>（Good）<br />
-              <span className="text-gray-500">追跡カードが1ターン目までに1枚以上ドローする確率。初動の安定性を確認するのに使います。</span>
+              <span className="text-gray-500">追跡カードが1ターン目に1枚以上ドローする確率。初動の安定性を確認するのに使います。</span>
             </li>
             <li>
               <span className="text-red-400 font-bold">初手事故率</span>（Bad）<br />
-              <span className="text-gray-500">追跡カードが1ターン目までに3枚以上ドローする確率。初手に同じカードが偏ってしまう事故を確認するのに使います。</span>
+              <span className="text-gray-500">追跡カードが1ターン目に3枚以上ドローする確率。初手に同じカードが偏ってしまう事故を確認するのに使います。</span>
             </li>
             <li>
               <span className="text-blue-400 font-bold">デッドドロー率</span>（Bad）<br />
-              <span className="text-gray-500">追跡カードが10ターン目以降に2枚以上ドローする確率。欲しいカードが終盤まで来ない事故を確認するのに使います。</span>
+              <span className="text-gray-500">追跡カードが10〜12ターン目に2枚以上ドローする確率。欲しいカードが終盤まで来ない事故を確認するのに使います。</span>
             </li>
           </ul>
           <ul className="space-y-1 list-disc list-inside text-gray-400 mt-2">
             <li>条件はチェックボックスでON/OFFできます</li>
             <li>カスタム条件を最大4つまで追加・保存・削除できます</li>
+            <li>デフォルト条件（初手安定率・初手事故率・デッドドロー率）は、変更後にリセットボタンを押すとデフォルトの設定値に戻せます。</li>
           </ul>
 
           <h3 className="text-sm font-bold text-orange-300 mt-3 mb-1">結果の見方</h3>
