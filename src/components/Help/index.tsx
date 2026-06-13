@@ -74,7 +74,7 @@ export function Help() {
           <h3 className="text-sm font-bold text-orange-300 mt-3 mb-1">条件の設定項目</h3>
           <ul className="space-y-1 list-disc list-inside text-gray-400">
             <li>追跡カード：複数選択可能（条件ごとに独立）</li>
-            <li>ターン数：1〜12（「まで」または「以降」を選択）</li>
+            <li>ターン範囲：開始〜終了ターンを選択（例: 1〜1T、10〜12T）</li>
             <li>枚数：1〜追跡カードの選択数まで</li>
             <li>Good / Bad ラベル：条件の種類を設定</li>
           </ul>

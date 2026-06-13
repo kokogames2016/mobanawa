@@ -8,7 +8,6 @@ import { useIsLandscape } from '../../hooks/useIsLandscape';
 
 const tap: React.CSSProperties = { touchAction: 'manipulation', cursor: 'pointer', WebkitTapHighlightColor: 'transparent' };
 
-type TurnDir = 'まで' | '以降';
 type CondLabel = 'good' | 'bad';
 
 interface ConditionState {
@@ -16,8 +15,8 @@ interface ConditionState {
   label: CondLabel;
   name: string;
   trackedIds: string[];
-  turns: number;
-  turnDir: TurnDir;
+  turnFrom: number;
+  turnTo: number;
   minCount: number;
   enabled: boolean;
   expanded: boolean;
@@ -41,9 +40,9 @@ const COLORS = [
 ];
 
 const INITIAL_CONDITIONS: ConditionState[] = [
-  { id: 'def-1', label: 'good', name: '初手安定率',    trackedIds: [], turns: 1,  turnDir: 'まで', minCount: 1, enabled: false, expanded: false },
-  { id: 'def-2', label: 'bad',  name: '初手事故率',    trackedIds: [], turns: 1,  turnDir: 'まで', minCount: 3, enabled: false, expanded: false },
-  { id: 'def-3', label: 'bad',  name: 'デッドドロー率', trackedIds: [], turns: 10, turnDir: '以降', minCount: 2, enabled: false, expanded: false },
+  { id: 'def-1', label: 'good', name: '初手安定率',    trackedIds: [], turnFrom: 1,  turnTo: 1,  minCount: 1, enabled: false, expanded: false },
+  { id: 'def-2', label: 'bad',  name: '初手事故率',    trackedIds: [], turnFrom: 1,  turnTo: 1,  minCount: 3, enabled: false, expanded: false },
+  { id: 'def-3', label: 'bad',  name: 'デッドドロー率', trackedIds: [], turnFrom: 10, turnTo: 12, minCount: 2, enabled: false, expanded: false },
 ];
 
 const DEFAULT_IDS = new Set(['def-1', 'def-2', 'def-3']);
@@ -51,16 +50,18 @@ const DEFAULT_IDS = new Set(['def-1', 'def-2', 'def-3']);
 function getCondError(cond: ConditionState): string | null {
   if (!cond.enabled) return null;
   if (cond.trackedIds.length === 0) return 'カードを選択してください';
-  if (cond.turns > 12) return 'ターンは12以内で設定してください';
+  if (cond.turnFrom > cond.turnTo) return '開始ターンは終了ターン以下にしてください';
   if (cond.minCount > cond.trackedIds.length) return `必要枚数（${cond.minCount}）が選択カード数（${cond.trackedIds.length}）を超えています`;
   return null;
 }
 
+// Turn T cards: turn 1 = indices 0-3 (initial hand), turn T≥2 = index T+2 drawn at start of turn T
+// Range [turnFrom, turnTo]: start = turnFrom==1 ? 0 : turnFrom+2, end = turnTo+3
 function evalCondition(shuffled: string[], cond: ConditionState): boolean {
   if (cond.trackedIds.length === 0) return false;
   const trackedSet = new Set(cond.trackedIds);
-  const start = cond.turnDir === 'まで' ? 0 : Math.min(4 + (cond.turns - 1), shuffled.length);
-  const end   = cond.turnDir === 'まで' ? Math.min(4 + (cond.turns - 1), shuffled.length) : shuffled.length;
+  const start = cond.turnFrom === 1 ? 0 : Math.min(cond.turnFrom + 2, shuffled.length);
+  const end   = Math.min(cond.turnTo + 3, shuffled.length);
   return shuffled.slice(start, end).filter(id => trackedSet.has(id)).length >= cond.minCount;
 }
 
@@ -134,6 +135,9 @@ function ConditionItem({
           {cond.label === 'good' ? 'Good' : 'Bad'}
         </span>
         <span className="text-xs text-gray-300 flex-1 truncate">{cond.name}</span>
+        <span className="text-gray-600 shrink-0 select-none" style={{ fontSize: '9px' }}>
+          {cond.turnFrom === cond.turnTo ? `${cond.turnFrom}T` : `${cond.turnFrom}〜${cond.turnTo}T`}
+        </span>
         {cond.enabled && error && <span className="text-red-400 shrink-0" style={{ fontSize: '10px' }}>⚠</span>}
         {onDelete && (
           <button type="button" style={tap} onClick={onDelete}
@@ -168,15 +172,16 @@ function ConditionItem({
 
           {/* Turn settings */}
           <div className="flex items-center gap-1.5 flex-wrap" style={{ fontSize: '11px', color: '#9ca3af' }}>
-            <select value={cond.turns} onChange={e => onChange({ turns: Number(e.target.value) })}
+            <select value={cond.turnFrom}
+              onChange={e => { const v = Number(e.target.value); onChange({ turnFrom: v, turnTo: Math.max(v, cond.turnTo) }); }}
               className="px-1 py-0.5 bg-gray-800 border border-gray-600 rounded text-white text-xs">
-              {Array.from({ length: 12 }, (_, i) => i + 1).map(t => <option key={t} value={t}>{t}</option>)}
+              {Array.from({ length: 12 }, (_, i) => i + 1).map(t => <option key={t} value={t}>{t}ターン目</option>)}
             </select>
-            <span>ターン目</span>
-            <select value={cond.turnDir} onChange={e => onChange({ turnDir: e.target.value as TurnDir })}
+            <span>〜</span>
+            <select value={cond.turnTo}
+              onChange={e => { const v = Number(e.target.value); onChange({ turnTo: v, turnFrom: Math.min(v, cond.turnFrom) }); }}
               className="px-1 py-0.5 bg-gray-800 border border-gray-600 rounded text-white text-xs">
-              <option value="まで">まで</option>
-              <option value="以降">以降</option>
+              {Array.from({ length: 12 }, (_, i) => i + 1).map(t => <option key={t} value={t}>{t}ターン目</option>)}
             </select>
             <select value={cond.minCount} onChange={e => onChange({ minCount: Number(e.target.value) })}
               className="px-1 py-0.5 bg-gray-800 border border-gray-600 rounded text-white text-xs">
@@ -320,8 +325,8 @@ export function DrawSim() {
       label: 'good' as CondLabel,
       name: `条件${prev.length + 1}`,
       trackedIds: [],
-      turns: 1,
-      turnDir: 'まで' as TurnDir,
+      turnFrom: 1,
+      turnTo: 1,
       minCount: 1,
       enabled: true,
       expanded: true,
