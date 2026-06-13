@@ -47,6 +47,23 @@ const INITIAL_CONDITIONS: ConditionState[] = [
 
 const DEFAULT_IDS = new Set(['def-1', 'def-2', 'def-3']);
 
+interface SavedCondition {
+  id: string;
+  label: CondLabel;
+  name: string;
+  turnFrom: number;
+  turnTo: number;
+  minCount: number;
+}
+
+const DEFAULT_RESET: Record<string, Omit<SavedCondition, 'id'>> = {
+  'def-1': { label: 'good', name: '初手安定率',    turnFrom: 1,  turnTo: 1,  minCount: 1 },
+  'def-2': { label: 'bad',  name: '初手事故率',    turnFrom: 1,  turnTo: 1,  minCount: 3 },
+  'def-3': { label: 'bad',  name: 'デッドドロー率', turnFrom: 10, turnTo: 12, minCount: 2 },
+};
+
+const SAVED_KEY = 'drawsim-saved-conditions';
+
 function getCondError(cond: ConditionState): string | null {
   if (!cond.enabled) return null;
   if (cond.trackedIds.length === 0) return 'カードを選択してください';
@@ -110,7 +127,7 @@ function LineChart({ series }: { series: ChartSeries[] }) {
 
 // ── Condition Item ────────────────────────────────────────────────────────────
 function ConditionItem({
-  cond, colorIdx, uniqueDeckCards, onChange, onToggleCard, onDelete,
+  cond, colorIdx, uniqueDeckCards, onChange, onToggleCard, onDelete, onSave, onReset,
 }: {
   cond: ConditionState;
   colorIdx: number;
@@ -118,6 +135,8 @@ function ConditionItem({
   onChange: (updates: Partial<ConditionState>) => void;
   onToggleCard: (cardId: string) => void;
   onDelete?: () => void;
+  onSave?: () => void;
+  onReset?: () => void;
 }) {
   const color = COLORS[Math.min(colorIdx, 3)];
   const error = getCondError(cond);
@@ -194,6 +213,22 @@ function ConditionItem({
 
           {error && <div className="text-red-400" style={{ fontSize: '11px' }}>{error}</div>}
 
+          {/* Reset / Save buttons */}
+          <div className="flex gap-1.5 justify-end">
+            {onReset && (
+              <button type="button" style={tap} onClick={onReset}
+                className="px-2 py-0.5 text-xs bg-gray-700 active:bg-gray-600 text-gray-300 rounded select-none">
+                リセット
+              </button>
+            )}
+            {onSave && (
+              <button type="button" style={tap} onClick={onSave}
+                className="px-2 py-0.5 text-xs bg-blue-800 active:bg-blue-700 text-blue-200 rounded select-none">
+                💾 保存
+              </button>
+            )}
+          </div>
+
           {/* Card picker */}
           <div>
             <div className="mb-1" style={{ fontSize: '11px', color: '#6b7280' }}>
@@ -252,6 +287,53 @@ export function DrawSim() {
 
   // Conditions
   const [conditions, setConditions] = useState<ConditionState[]>(INITIAL_CONDITIONS);
+
+  // Saved custom conditions (localStorage)
+  const [savedConditions, setSavedConditions] = useState<SavedCondition[]>(() => {
+    try { return JSON.parse(localStorage.getItem(SAVED_KEY) ?? '[]'); } catch { return []; }
+  });
+
+  function persistSaved(next: SavedCondition[]) {
+    setSavedConditions(next);
+    localStorage.setItem(SAVED_KEY, JSON.stringify(next));
+  }
+
+  function saveCondition(cond: ConditionState) {
+    const entry: SavedCondition = {
+      id: `saved-${Date.now()}`,
+      label: cond.label,
+      name: cond.name,
+      turnFrom: cond.turnFrom,
+      turnTo: cond.turnTo,
+      minCount: cond.minCount,
+    };
+    persistSaved([...savedConditions, entry]);
+  }
+
+  function deleteSavedCondition(id: string) {
+    persistSaved(savedConditions.filter(c => c.id !== id));
+  }
+
+  function addFromSaved(saved: SavedCondition) {
+    if (customCondCount >= 4) return;
+    setConditions(prev => [...prev, {
+      id: `custom-${Date.now()}`,
+      label: saved.label,
+      name: saved.name,
+      trackedIds: [],
+      turnFrom: saved.turnFrom,
+      turnTo: saved.turnTo,
+      minCount: saved.minCount,
+      enabled: true,
+      expanded: true,
+    }]);
+  }
+
+  function resetCondition(id: string) {
+    const defaults = DEFAULT_RESET[id];
+    if (!defaults) return;
+    setConditions(prev => prev.map(c => c.id === id ? { ...c, ...defaults } : c));
+  }
 
   // Trial results
   const [trialResults, setTrialResults] = useState<TrialResult[]>([]);
@@ -499,6 +581,8 @@ export function DrawSim() {
           onChange={updates => updateCondition(cond.id, updates)}
           onToggleCard={cardId => toggleTrackedCard(cond.id, cardId)}
           onDelete={!DEFAULT_IDS.has(cond.id) ? () => deleteCondition(cond.id) : undefined}
+          onSave={!DEFAULT_IDS.has(cond.id) ? () => saveCondition(cond) : undefined}
+          onReset={DEFAULT_IDS.has(cond.id) ? () => resetCondition(cond.id) : undefined}
         />
       ))}
       {customCondCount < 4 && (
@@ -506,6 +590,31 @@ export function DrawSim() {
           className="w-full py-1.5 border border-dashed border-gray-600 rounded select-none text-xs text-gray-500 hover:text-gray-300 hover:border-gray-400 transition-colors">
           ＋ 条件を追加
         </button>
+      )}
+      {savedConditions.length > 0 && (
+        <div className="mt-2">
+          <div className="text-gray-600 mb-1" style={{ fontSize: '10px' }}>保存済み条件</div>
+          <div className="space-y-1">
+            {savedConditions.map(s => (
+              <div key={s.id} className="flex items-center gap-1.5 px-2 py-1 bg-gray-900 border border-gray-700 rounded">
+                <span className={`text-xs font-bold px-1 rounded shrink-0 ${s.label === 'good' ? 'bg-green-900 text-green-300' : 'bg-red-900 text-red-300'}`}
+                  style={{ fontSize: '9px' }}>{s.label === 'good' ? 'Good' : 'Bad'}</span>
+                <span className="text-xs text-gray-300 flex-1 truncate">{s.name}</span>
+                <span className="text-gray-600 shrink-0" style={{ fontSize: '9px' }}>
+                  {s.turnFrom === s.turnTo ? `${s.turnFrom}T` : `${s.turnFrom}〜${s.turnTo}T`} / {s.minCount}枚
+                </span>
+                <button type="button" style={tap} onClick={() => addFromSaved(s)} disabled={customCondCount >= 4}
+                  className="px-1.5 py-0.5 text-xs bg-gray-700 active:bg-gray-600 disabled:opacity-30 text-gray-200 rounded select-none shrink-0">
+                  追加
+                </button>
+                <button type="button" style={tap} onClick={() => deleteSavedCondition(s.id)}
+                  className="text-gray-600 hover:text-red-400 shrink-0 select-none px-1 text-xs transition-colors">
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   ) : null;
@@ -635,9 +744,16 @@ export function DrawSim() {
           <div className="grid grid-cols-6 gap-1">
             {drawPile.map((id, i) => {
               const card = getCard(id);
+              const matchingIdxs = conditions
+                .map((c, idx) => ({ idx, c }))
+                .filter(({ c }) => c.enabled && c.trackedIds.includes(id));
+              const shadows = matchingIdxs.map(({ idx }, n) =>
+                `0 0 0 ${(n + 1) * 2}px ${COLORS[Math.min(idx, 3)].hex}`
+              ).join(', ');
               return (
-                <div key={i} className="p-1 bg-gray-800 rounded border border-gray-700 text-xs">
-                  <div className="text-gray-500 text-center">{i + 1}</div>
+                <div key={i} className="p-1 bg-gray-800 rounded text-xs"
+                  style={{ border: matchingIdxs.length > 0 ? `1.5px solid ${COLORS[Math.min(matchingIdxs[0].idx, 3)].hex}` : '1px solid #374151', boxShadow: shadows || undefined }}>
+                  <div className="text-gray-500 text-center" style={{ fontSize: '8px' }}>ターン{i + 2}</div>
                   <div className="flex justify-center">
                     <CardShape shape={card?.shape ?? null} cellSize={5} size={card?.size} />
                   </div>
