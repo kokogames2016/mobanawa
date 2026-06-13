@@ -40,8 +40,43 @@ export function Help() {
           <ul className="space-y-1 list-disc list-inside text-gray-400">
             <li>デッキを選択して「開始」で山札をセットします</li>
             <li>「引き順を見る」をタップするとスクロールで山札情報を確認できます</li>
-            <li>追跡カード：複数選択可能。選択したカードのいずれかがゲーム開始時にドローできた場合「成功」と判断します。</li>
             <li>リシャッフル（マリガン）：ゲーム開始後1度だけ手札を引き直しできる機能です。リシャッフルはするかしないかを選べます。</li>
+          </ul>
+
+          <h3 className="text-sm font-bold text-orange-300 mt-3 mb-1">条件設定</h3>
+          <p className="text-gray-400 mb-2">デフォルトで3つの条件が用意されています。</p>
+          <ul className="space-y-2 text-gray-400">
+            <li>
+              <span className="text-green-400 font-bold">初手安定率</span>（Good）<br />
+              <span className="text-gray-500">追跡カードが1ターン目までに1枚以上ドローする確率。初動の安定性を確認するのに使います。</span>
+            </li>
+            <li>
+              <span className="text-red-400 font-bold">初手事故率</span>（Bad）<br />
+              <span className="text-gray-500">追跡カードが1ターン目までに3枚以上ドローする確率。初手に同じカードが偏ってしまう事故を確認するのに使います。</span>
+            </li>
+            <li>
+              <span className="text-blue-400 font-bold">デッドドロー率</span>（Bad）<br />
+              <span className="text-gray-500">追跡カードが10ターン目以降に2枚以上ドローする確率。欲しいカードが終盤まで来ない事故を確認するのに使います。</span>
+            </li>
+          </ul>
+          <ul className="space-y-1 list-disc list-inside text-gray-400 mt-2">
+            <li>条件はチェックボックスでON/OFFできます</li>
+            <li>カスタム条件を最大4つまで追加・保存・削除できます</li>
+          </ul>
+
+          <h3 className="text-sm font-bold text-orange-300 mt-3 mb-1">結果の見方</h3>
+          <ul className="space-y-1 list-disc list-inside text-gray-400">
+            <li>各条件ごとに試行回数・成功回数・確率を表示します</li>
+            <li>チェックした条件が2つ以上の場合、全条件同時成立の確率も表示します</li>
+            <li>グラフで確率の収束の様子を確認できます</li>
+          </ul>
+
+          <h3 className="text-sm font-bold text-orange-300 mt-3 mb-1">条件の設定項目</h3>
+          <ul className="space-y-1 list-disc list-inside text-gray-400">
+            <li>追跡カード：複数選択可能（条件ごとに独立）</li>
+            <li>ターン数：1〜12（「まで」または「以降」を選択）</li>
+            <li>枚数：1〜追跡カードの選択数まで</li>
+            <li>Good / Bad ラベル：条件の種類を設定</li>
           </ul>
         </section>
 
