@@ -204,7 +204,7 @@ function ConditionItem({
             </select>
             <select value={cond.minCount} onChange={e => onChange({ minCount: Number(e.target.value) })}
               className="px-1 py-0.5 bg-gray-800 border border-gray-600 rounded text-white text-xs">
-              {Array.from({ length: Math.max(1, cond.trackedIds.length) }, (_, i) => i + 1).map(n => (
+              {Array.from({ length: Math.max(cond.minCount, cond.trackedIds.length, 1) }, (_, i) => i + 1).map(n => (
                 <option key={n} value={n}>{n}</option>
               ))}
             </select>
