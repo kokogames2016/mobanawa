@@ -27,7 +27,7 @@ const BATTLE_SAVE_KEY = 'nawabattler_battle_v1';
 
 // ─── セルの色 ─────────────────────────────────────────────────────────────────
 const CELL_COLOR: Record<CellState, string> = {
-  E: '#2a2a2a', W: '#111', B: '#1a1a1a', blocked: '#333',
+  E: '#2a2a2a', W: '#111', B: '#D0D0D0', blocked: '#E0E0E0',
   p1: '#b35c00', p1_sp: '#ff4500', p2: '#00308f', p2_sp: '#00aaff',
 };
 
@@ -118,7 +118,15 @@ export function BattleSim() {
   const [p2SAMode,  setP2SAMode]  = useState(false);
   const [pending,   setPending]   = useState<PendingPlacement | null>(null);
   const [hover,     setHover]     = useState<{ x: number; y: number } | null>(null);
-  const cellSize = 10;
+  const [cellSize,     setCellSize]     = useState(10);
+  const [handCellSize, setHandCellSize] = useState(3);
+
+  // フルデッキ（ドロー順を隠すために全15枚を保持）
+  const [p1FullDeck, setP1FullDeck] = useState<string[]>([]);
+  const [p2FullDeck, setP2FullDeck] = useState<string[]>([]);
+
+  // ゲーム終了後の遅延遷移
+  const [gameEndPending, setGameEndPending] = useState(false);
 
   // ── 派生値 ────────────────────────────────────────────────────────────────
   const cardMap = useMemo(() => new Map(cards.map(c => [c.id, c])), [cards]);
@@ -128,14 +136,14 @@ export function BattleSim() {
   const availP1SP = p1SPAccum - p1SPSpent;
   const availP2SP = p2SPAccum - p2SPSpent;
 
-  // 仮配置時のスコア予測
-  const pendingScore = useMemo(() => {
+  // 仮配置時のスコア予測（両プレイヤー）
+  const pendingCounts = useMemo(() => {
     if (!pending?.isValid) return null;
     const card = cardMap.get(pending.cardId);
     if (!card?.shape) return null;
     const simGrid = placeCard(grid, card.shape, pending.x, pending.y, pending.player,
       card.specialPos, pending.rotation, pending.isSA);
-    return countCells(simGrid)[pending.player];
+    return countCells(simGrid);
   }, [pending, grid, cardMap]);
 
   const stageInfo = useMemo<StageInfo | undefined>(() => {
@@ -149,6 +157,23 @@ export function BattleSim() {
       cols: stage.width,
     };
   }, [stage]);
+
+  // デッキ全15枚を名前順で表示（ドロー順を隠す）
+  const p1DeckDisplay = useMemo(() => {
+    if (!p1FullDeck.length) return [];
+    const drawnCount = p1FullDeck.length - p1Pile.length;
+    return p1FullDeck
+      .map((id, i) => ({ id, drawn: i < drawnCount }))
+      .sort((a, b) => (cardMap.get(a.id)?.name ?? '').localeCompare(cardMap.get(b.id)?.name ?? '', 'ja'));
+  }, [p1FullDeck, p1Pile, cardMap]);
+
+  const p2DeckDisplay = useMemo(() => {
+    if (!p2FullDeck.length) return [];
+    const drawnCount = p2FullDeck.length - p2Pile.length;
+    return p2FullDeck
+      .map((id, i) => ({ id, drawn: i < drawnCount }))
+      .sort((a, b) => (cardMap.get(a.id)?.name ?? '').localeCompare(cardMap.get(b.id)?.name ?? '', 'ja'));
+  }, [p2FullDeck, p2Pile, cardMap]);
 
   // フォルダ関連
   const userDecks   = useMemo(() => decks.filter(d => d.id !== 'all' && !isSampleDeck(d.id)), [decks]);
@@ -224,6 +249,9 @@ export function BattleSim() {
     setCpuMessage(null);
     setP1Placed([]);
     setP2Placed([]);
+    setP1FullDeck(p1Shuffled);
+    setP2FullDeck(p2Shuffled);
+    setGameEndPending(false);
     clearBattleState();
     setScreen('battle');
   }
@@ -240,6 +268,7 @@ export function BattleSim() {
       p1SPCounted: [...p1SPCounted.current],
       p2SPCounted: [...p2SPCounted.current],
       cpuMode, cpuLevel, stageId, p1DeckId, p2DeckId,
+      p1FullDeck, p2FullDeck,
     };
     try { localStorage.setItem(BATTLE_SAVE_KEY, JSON.stringify(save)); } catch {}
   }, [screen, grid, p1Hand, p2Hand, p1Pile, p2Pile, turn, waitFor, p1Action,
@@ -279,6 +308,8 @@ export function BattleSim() {
       if (d.stageId  !== undefined) setStageId(d.stageId);
       if (d.p1DeckId !== undefined) setP1DeckId(d.p1DeckId);
       if (d.p2DeckId !== undefined) setP2DeckId(d.p2DeckId);
+      if (d.p1FullDeck) setP1FullDeck(d.p1FullDeck);
+      if (d.p2FullDeck) setP2FullDeck(d.p2FullDeck);
       setCpuThinking(false); setPending(null); setHover(null);
       setP1Sel(null); setP2Sel(null); setP1SAMode(false); setP2SAMode(false);
       setShowExitConfirm(false); setTrashMode(null); setCpuMessage(null);
@@ -307,11 +338,14 @@ export function BattleSim() {
     usedCardId: string,
     hand: string[], pile: string[]
   ): { newHand: string[]; newPile: string[] } {
-    const newHand = hand.filter(id => id !== usedCardId);
+    const idx = hand.indexOf(usedCardId);
+    const newHand = [...hand];
     if (pile.length > 0) {
-      newHand.push(pile[0]);
+      if (idx !== -1) newHand[idx] = pile[0];
+      else newHand.push(pile[0]);
       return { newHand, newPile: pile.slice(1) };
     }
+    if (idx !== -1) newHand.splice(idx, 1);
     return { newHand, newPile: pile };
   }
 
@@ -385,12 +419,15 @@ export function BattleSim() {
     const isP1 = trashMode === 'p1';
     setTrashMode(null);
     if (isP1) {
-      // トラッシュ後、山札から1枚ドローして手札4枚を維持
-      const afterTrash = trashCardId ? p1Hand.filter(id => id !== trashCardId) : [...p1Hand];
-      const newP1Hand = afterTrash.length < HAND_SIZE && p1Pile.length > 0
-        ? [...afterTrash, p1Pile[0]] : afterTrash;
-      const newP1Pile = afterTrash.length < HAND_SIZE && p1Pile.length > 0
-        ? p1Pile.slice(1) : p1Pile;
+      // トラッシュ後、同スロットに山札から1枚補充
+      const trashIdx = trashCardId ? p1Hand.indexOf(trashCardId) : -1;
+      const afterTrash = [...p1Hand];
+      let newP1Pile = p1Pile;
+      if (trashIdx !== -1) {
+        if (p1Pile.length > 0) { afterTrash[trashIdx] = p1Pile[0]; newP1Pile = p1Pile.slice(1); }
+        else afterTrash.splice(trashIdx, 1);
+      }
+      const newP1Hand = afterTrash;
       setP1Hand(newP1Hand);
       setP1Pile(newP1Pile);
       setP1SPAccum(prev => prev + 1);
@@ -398,12 +435,15 @@ export function BattleSim() {
       setP1Sel(null); setPending(null); setP1SAMode(false);
       setWaitFor('p2');
     } else {
-      // トラッシュ後、山札から1枚ドローして手札4枚を維持
-      const afterTrash = trashCardId ? p2Hand.filter(id => id !== trashCardId) : [...p2Hand];
-      const newP2Hand = afterTrash.length < HAND_SIZE && p2Pile.length > 0
-        ? [...afterTrash, p2Pile[0]] : afterTrash;
-      const newP2Pile = afterTrash.length < HAND_SIZE && p2Pile.length > 0
-        ? p2Pile.slice(1) : p2Pile;
+      // トラッシュ後、同スロットに山札から1枚補充
+      const trashIdx2 = trashCardId ? p2Hand.indexOf(trashCardId) : -1;
+      const afterTrash2 = [...p2Hand];
+      let newP2Pile = p2Pile;
+      if (trashIdx2 !== -1) {
+        if (p2Pile.length > 0) { afterTrash2[trashIdx2] = p2Pile[0]; newP2Pile = p2Pile.slice(1); }
+        else afterTrash2.splice(trashIdx2, 1);
+      }
+      const newP2Hand = afterTrash2;
       setP2Hand(newP2Hand);
       setP2Pile(newP2Pile);
       setP2SPAccum(prev => prev + 1);
@@ -447,7 +487,9 @@ export function BattleSim() {
           if (move.isSA) { setP2SPSpent(s => s + card.spp); setP2SACount(n => n + 1); }
           // SP加算はapplyNewSPで行う
           setP2Placed(prev => [...prev, { cardId: move.cardId, isSA: move.isSA }]);
-          showCpuMsg(`CPU が「${move.cardName}」を配置しました`);
+          showCpuMsg(move.isSA
+            ? `⚡ CPUがSAを使用しました！「${move.cardName}」`
+            : `CPU が「${move.cardName}」を配置しました`);
         }
       } else {
         // CPUパス：P1のカードを配置してから処理
@@ -529,7 +571,7 @@ export function BattleSim() {
 
   function advanceTurn(_currentGrid: CellState[][]) {
     if (turn >= MAX_TURNS) {
-      setScreen('result');
+      setGameEndPending(true);
       return;
     }
     setTurn(t => t + 1);
@@ -812,7 +854,7 @@ export function BattleSim() {
         }}
       >
         <div className="flex justify-center mb-0.5">
-          <CardShape shape={card.shape} specialPos={card.specialPos} cellSize={3}
+          <CardShape shape={card.shape} specialPos={card.specialPos} cellSize={handCellSize}
             p1Color={isP1 ? '#FFE000' : '#60a5fa'} spColor={isP1 ? '#FF4500' : '#00aaff'} />
         </div>
         <div className="text-center truncate leading-none" style={{ fontSize: '8px', color: '#ccc' }}>{card.name}</div>
@@ -1075,14 +1117,14 @@ export function BattleSim() {
         <span className="text-xs text-gray-400 font-mono">T{turn}/{MAX_TURNS}</span>
         <span className="text-orange-400 text-xs font-bold">
           P1:{p1Score}マス
-          {pendingScore !== null && pending?.player === 'p1' && (
-            <span className="text-yellow-400 ml-0.5">→{pendingScore}</span>
+          {pendingCounts !== null && (
+            <span className="text-yellow-400 ml-0.5">→{pendingCounts.p1}</span>
           )}
         </span>
         <span className="text-blue-400 text-xs font-bold">
           {cpuMode ? 'CPU' : 'P2'}:{p2Score}マス
-          {pendingScore !== null && pending?.player === 'p2' && (
-            <span className="text-yellow-400 ml-0.5">→{pendingScore}</span>
+          {pendingCounts !== null && (
+            <span className="text-yellow-400 ml-0.5">→{pendingCounts.p2}</span>
           )}
         </span>
         <span className="ml-auto flex items-center gap-2 text-xs">
@@ -1096,6 +1138,17 @@ export function BattleSim() {
             style={tap}
           >終了</button>
         </span>
+      </div>
+      {/* サイズスライダー行 */}
+      <div className="flex items-center gap-3 px-2 py-0.5 border-t border-gray-800">
+        <span className="text-gray-600 shrink-0" style={{ fontSize: '9px' }}>ステージ</span>
+        <input type="range" min={6} max={18} value={cellSize}
+          onChange={e => setCellSize(Number(e.target.value))}
+          className="flex-1 h-1 accent-orange-500" style={{ touchAction: 'none' }} />
+        <span className="text-gray-600 shrink-0" style={{ fontSize: '9px' }}>手札</span>
+        <input type="range" min={2} max={5} value={handCellSize}
+          onChange={e => setHandCellSize(Number(e.target.value))}
+          className="flex-1 h-1 accent-blue-500" style={{ touchAction: 'none' }} />
       </div>
       {/* SP行 */}
       <div className="flex items-center gap-3 px-2 py-0.5 border-t border-gray-800">
@@ -1181,24 +1234,24 @@ export function BattleSim() {
           {cpuMessage}
         </div>
       )}
-      {/* 残りデッキ プルダウン */}
+      {/* デッキ（全15枚・ドロー済みはグレー） */}
       <div className="mt-1">
         <button type="button" style={tap}
           onClick={() => setShowP1Pile(p => !p)}
           className="flex items-center gap-1 text-gray-500 hover:text-gray-300 text-xs select-none">
           <span>{showP1Pile ? '▼' : '▶'}</span>
-          <span>残りデッキ（{p1Pile.length}枚）</span>
+          <span>デッキ（残り{p1Pile.length}枚 / 全{p1FullDeck.length}枚）</span>
         </button>
-        {showP1Pile && p1Pile.length > 0 && (
+        {showP1Pile && p1DeckDisplay.length > 0 && (
           <div className="mt-1 max-h-28 overflow-y-auto bg-gray-950 rounded p-1">
-            {p1Pile.map((id, i) => {
+            {p1DeckDisplay.map(({ id, drawn }, i) => {
               const c = cardMap.get(id);
               return (
-                <div key={i} className="flex items-center gap-1 py-0.5" style={{ fontSize: '9px' }}>
-                  <span className="text-gray-600 w-4 text-right flex-shrink-0">{i+1}.</span>
-                  <span className="text-gray-300 truncate">{c?.name ?? '?'}</span>
-                  {c?.hasSpecialSquare && <span className="text-red-400 flex-shrink-0">★</span>}
+                <div key={i} className={`flex items-center gap-1 py-0.5 ${drawn ? 'opacity-40' : ''}`} style={{ fontSize: '9px' }}>
+                  <span className={drawn ? 'text-gray-500 truncate' : 'text-gray-300 truncate'}>{c?.name ?? '?'}</span>
+                  {c?.hasSpecialSquare && <span className={drawn ? 'text-gray-600 flex-shrink-0' : 'text-red-400 flex-shrink-0'}>★</span>}
                   <span className="text-gray-600 flex-shrink-0 ml-auto">{c?.size}m</span>
+                  {drawn && <span className="text-gray-700 flex-shrink-0">✓</span>}
                 </div>
               );
             })}
@@ -1217,24 +1270,24 @@ export function BattleSim() {
       <div className="grid grid-cols-4 gap-1">
         {p2Hand.map(id => renderHandCard(id, waitFor === 'p2' && !cpuThinking, false))}
       </div>
-      {/* 残りデッキ プルダウン */}
+      {/* デッキ（全15枚・ドロー済みはグレー） */}
       <div className="mt-1">
         <button type="button" style={tap}
           onClick={() => setShowP2Pile(p => !p)}
           className="flex items-center gap-1 text-gray-500 hover:text-gray-300 text-xs select-none">
           <span>{showP2Pile ? '▼' : '▶'}</span>
-          <span>残りデッキ（{p2Pile.length}枚）</span>
+          <span>デッキ（残り{p2Pile.length}枚 / 全{p2FullDeck.length}枚）</span>
         </button>
-        {showP2Pile && p2Pile.length > 0 && (
+        {showP2Pile && p2DeckDisplay.length > 0 && (
           <div className="mt-1 max-h-28 overflow-y-auto bg-gray-950 rounded p-1">
-            {p2Pile.map((id, i) => {
+            {p2DeckDisplay.map(({ id, drawn }, i) => {
               const c = cardMap.get(id);
               return (
-                <div key={i} className="flex items-center gap-1 py-0.5" style={{ fontSize: '9px' }}>
-                  <span className="text-gray-600 w-4 text-right flex-shrink-0">{i+1}.</span>
-                  <span className="text-gray-300 truncate">{c?.name ?? '?'}</span>
-                  {c?.hasSpecialSquare && <span className="text-red-400 flex-shrink-0">★</span>}
+                <div key={i} className={`flex items-center gap-1 py-0.5 ${drawn ? 'opacity-40' : ''}`} style={{ fontSize: '9px' }}>
+                  <span className={drawn ? 'text-gray-500 truncate' : 'text-gray-300 truncate'}>{c?.name ?? '?'}</span>
+                  {c?.hasSpecialSquare && <span className={drawn ? 'text-gray-600 flex-shrink-0' : 'text-red-400 flex-shrink-0'}>★</span>}
                   <span className="text-gray-600 flex-shrink-0 ml-auto">{c?.size}m</span>
+                  {drawn && <span className="text-gray-700 flex-shrink-0">✓</span>}
                 </div>
               );
             })}
@@ -1300,6 +1353,24 @@ export function BattleSim() {
     </div>
   ) : null;
 
+  // ── ゲーム終了オーバーレイ ────────────────────────────────────────────────
+  const gameEndOverlay = gameEndPending ? (
+    <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/70">
+      <div className="bg-gray-900 border border-gray-600 rounded-xl p-6 mx-4 max-w-xs w-full shadow-2xl text-center">
+        <div className="text-2xl font-bold text-white mb-2">ゲーム終了！</div>
+        <div className="flex gap-4 justify-center mb-4 text-lg font-bold">
+          <span className="text-orange-400">P1: {counts.p1}マス</span>
+          <span className="text-blue-400">{cpuMode ? 'CPU' : 'P2'}: {counts.p2}マス</span>
+        </div>
+        <button
+          onClick={() => { setGameEndPending(false); clearBattleState(); setScreen('result'); }}
+          className="w-full py-2 bg-orange-600 active:bg-orange-500 text-white rounded font-bold text-sm"
+          style={tap}
+        >結果を見る</button>
+      </div>
+    </div>
+  ) : null;
+
   // ── 対戦画面レイアウト ────────────────────────────────────────────────────
   if (screen === 'setup')  return setupScreen;
   if (screen === 'result') return resultScreen;
@@ -1310,6 +1381,7 @@ export function BattleSim() {
       <div className="flex flex-row overflow-hidden" style={{ height: '100%', position: 'relative' }}>
         {trashOverlay}
         {exitConfirmEl}
+        {gameEndOverlay}
         {/* 左: ステージ + 操作 */}
         <div className="flex flex-col overflow-hidden border-r border-gray-700" style={{ width: '55%' }}>
           {statusBar}
@@ -1340,6 +1412,7 @@ export function BattleSim() {
     <div className="flex flex-col overflow-hidden" style={{ height: '100%', position: 'relative' }}>
       {trashOverlay}
       {exitConfirmEl}
+      {gameEndOverlay}
       {statusBar}
       {/* ステージ + 操作（配置済みサイドバー含む） */}
       <div className="flex flex-shrink-0 overflow-hidden" style={{ maxHeight: '50vh' }}>
