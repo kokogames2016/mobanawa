@@ -7,7 +7,7 @@ import type { Stage } from '../../types';
 import { rotateShape } from '../../utils/cardShape';
 import {
   canPlace, placeCard, resolveSimultaneous,
-  shuffleDeck, countCells, getActivatedSPPositions,
+  shuffleDeck, countCells, getActivatedSPPositions, hasAnyValidPlacement,
 } from '../../utils/boardLogic';
 import { computeCpuMove, pickCardToTrash } from '../../utils/battleLogic';
 import type { Rotation, StageInfo } from '../../utils/battleLogic';
@@ -158,22 +158,41 @@ export function BattleSim() {
     };
   }, [stage]);
 
-  // デッキ全15枚を名前順で表示（ドロー順を隠す）
+  // デッキ全15枚をスロット順（引き順）で表示
   const p1DeckDisplay = useMemo(() => {
     if (!p1FullDeck.length) return [];
     const drawnCount = p1FullDeck.length - p1Pile.length;
-    return p1FullDeck
-      .map((id, i) => ({ id, drawn: i < drawnCount }))
-      .sort((a, b) => (cardMap.get(a.id)?.name ?? '').localeCompare(cardMap.get(b.id)?.name ?? '', 'ja'));
-  }, [p1FullDeck, p1Pile, cardMap]);
+    return p1FullDeck.map((id, i) => ({ id, drawn: i < drawnCount }));
+  }, [p1FullDeck, p1Pile]);
 
   const p2DeckDisplay = useMemo(() => {
     if (!p2FullDeck.length) return [];
     const drawnCount = p2FullDeck.length - p2Pile.length;
-    return p2FullDeck
-      .map((id, i) => ({ id, drawn: i < drawnCount }))
-      .sort((a, b) => (cardMap.get(a.id)?.name ?? '').localeCompare(cardMap.get(b.id)?.name ?? '', 'ja'));
-  }, [p2FullDeck, p2Pile, cardMap]);
+    return p2FullDeck.map((id, i) => ({ id, drawn: i < drawnCount }));
+  }, [p2FullDeck, p2Pile]);
+
+  // 手札の配置可能性（通常・SA）
+  const p1HandPlaceability = useMemo(() => {
+    if (!grid.length) return new Map<string, { canNormal: boolean; canSA: boolean }>();
+    return new Map(p1Hand.map(id => {
+      const card = cardMap.get(id);
+      if (!card?.shape) return [id, { canNormal: false, canSA: false }];
+      const canNormal = hasAnyValidPlacement(grid, card.shape, 'p1', false);
+      const canSA = (card.spp ?? 0) > 0 && availP1SP >= card.spp && hasAnyValidPlacement(grid, card.shape, 'p1', true);
+      return [id, { canNormal, canSA }];
+    }));
+  }, [p1Hand, grid, cardMap, availP1SP]);
+
+  const p2HandPlaceability = useMemo(() => {
+    if (!grid.length) return new Map<string, { canNormal: boolean; canSA: boolean }>();
+    return new Map(p2Hand.map(id => {
+      const card = cardMap.get(id);
+      if (!card?.shape) return [id, { canNormal: false, canSA: false }];
+      const canNormal = hasAnyValidPlacement(grid, card.shape, 'p2', false);
+      const canSA = (card.spp ?? 0) > 0 && availP2SP >= card.spp && hasAnyValidPlacement(grid, card.shape, 'p2', true);
+      return [id, { canNormal, canSA }];
+    }));
+  }, [p2Hand, grid, cardMap, availP2SP]);
 
   // フォルダ関連
   const userDecks   = useMemo(() => decks.filter(d => d.id !== 'all' && !isSampleDeck(d.id)), [decks]);
@@ -827,15 +846,21 @@ export function BattleSim() {
   }
 
   // ── 手札カードボタン ──────────────────────────────────────────────────────
-  function renderHandCard(cardId: string, isActive: boolean, isP1: boolean) {
+  function renderHandCard(cardId: string, isActive: boolean, isP1: boolean, placeability?: { canNormal: boolean; canSA: boolean }) {
     const card = cardMap.get(cardId);
     const sel  = isP1 ? p1Sel : p2Sel;
     const isSel = sel === cardId;
     const isSA  = isP1 ? p1SAMode : p2SAMode;
-    const avSP  = isP1 ? availP1SP : availP2SP;
     const hasPending = pending?.cardId === cardId;
 
     if (!card) return null;
+
+    // 配置可能性チェック：SAモード中はSA配置可能か、通常モードは通常配置可能か
+    const placeable = placeability
+      ? (isSA ? placeability.canSA : placeability.canNormal)
+      : true;
+    const disabled = !isActive || !placeable;
+
     const borderCls = hasPending
       ? 'border-yellow-400 bg-yellow-950'
       : isSel && isSA
@@ -846,11 +871,11 @@ export function BattleSim() {
 
     return (
       <div key={cardId}
-        className={`rounded border p-1 transition-all cursor-pointer select-none ${borderCls} ${!isActive ? 'opacity-40 pointer-events-none' : ''}`}
+        className={`rounded border p-1 transition-all select-none ${borderCls} ${disabled ? 'opacity-30 pointer-events-none grayscale' : 'cursor-pointer'}`}
         onClick={() => {
-          if (!isActive) return;
-          if (isP1) { setP1Sel(isSel ? null : cardId); setP1SAMode(false); setPending(null); }
-          else      { setP2Sel(isSel ? null : cardId); setP2SAMode(false); setPending(null); }
+          if (disabled) return;
+          if (isP1) { setP1Sel(isSel ? null : cardId); setPending(null); }
+          else      { setP2Sel(isSel ? null : cardId); setPending(null); }
         }}
       >
         <div className="flex justify-center mb-0.5">
@@ -937,11 +962,11 @@ export function BattleSim() {
           className={`px-1 py-1 rounded text-xs ${hasPend ? 'bg-gray-600 active:bg-gray-500 text-white' : 'bg-gray-800 text-gray-600 cursor-not-allowed'}`}>
           取消
         </button>
-        {/* SA */}
-        {saCard && saCard.spp > 0 && (
-          <button onClick={() => setSA(!isSA)} disabled={!saOk || !isActive}
-            className={`px-1 py-1 rounded text-xs font-bold ${isSA ? 'bg-red-600 text-white animate-pulse' : saOk && isActive ? 'bg-red-900 text-red-300 border border-red-600' : 'bg-gray-800 text-gray-600 cursor-not-allowed'}`}>
-            {isSA ? '★SA中' : `SA(${avSP}/${saCard.spp})`}
+        {/* SA - SAモードをカード選択前に選べる */}
+        {avSP > 0 && (
+          <button onClick={() => { setSA(!isSA); setPending(null); }} disabled={!isActive}
+            className={`px-1 py-1 rounded text-xs font-bold ${isSA ? 'bg-red-600 text-white animate-pulse' : isActive ? 'bg-red-900 text-red-300 border border-red-600' : 'bg-gray-800 text-gray-600 cursor-not-allowed'}`}>
+            {isSA ? '★SA中' : (saCard && saCard.spp > 0 ? `SA(${avSP}/${saCard.spp})` : `SA(${avSP}SP)`)}
           </button>
         )}
         {/* パス */}
@@ -1106,12 +1131,20 @@ export function BattleSim() {
   );
 
   // ── 対戦画面（共通パーツ） ────────────────────────────────────────────────
-  // SA が使用可能かどうか（選択中カードに対して）
-  const p1SAAvail = p1Sel ? (cardMap.get(p1Sel)?.spp ?? 0) > 0 && availP1SP >= (cardMap.get(p1Sel)?.spp ?? 0) : false;
-  const p2SAAvail = p2Sel ? (cardMap.get(p2Sel)?.spp ?? 0) > 0 && availP2SP >= (cardMap.get(p2Sel)?.spp ?? 0) : false;
+  // SA が使用可能かどうか（手札に1枚でもSA可能なカードがあるか）
+  const p1SAAvail = p1Hand.some(id => { const c = cardMap.get(id); return (c?.spp ?? 0) > 0 && availP1SP >= (c?.spp ?? 0); });
+  const p2SAAvail = p2Hand.some(id => { const c = cardMap.get(id); return (c?.spp ?? 0) > 0 && availP2SP >= (c?.spp ?? 0); });
 
   const statusBar = (
     <div className="flex-shrink-0 bg-gray-900 border-b border-gray-700">
+    <style>{`
+      @keyframes bsim-flame-p1 { 0%{background-position:50% 100%} 50%{background-position:50% 0%} 100%{background-position:50% 100%} }
+      @keyframes bsim-flame-p2 { 0%{background-position:50% 100%} 50%{background-position:50% 0%} 100%{background-position:50% 100%} }
+      .bsim-fp1 { background:linear-gradient(to top,#CC1100,#FF2200,#FF4500,#FF8C00,#FFE000,#FF8C00,#FF4500); background-size:100% 500%; box-shadow:0 0 5px #FF4500; animation:bsim-flame-p1 1.4s ease-in-out infinite; }
+      .bsim-fp2 { background:linear-gradient(to top,#001199,#0033CC,#0044FF,#0088FF,#00CCFF,#00FFFF,#00CCFF); background-size:100% 500%; box-shadow:0 0 5px #00CCFF; animation:bsim-flame-p2 1.4s ease-in-out infinite; }
+      .bsim-fp1:nth-child(2n){animation-delay:0.2s} .bsim-fp1:nth-child(3n){animation-delay:0.4s} .bsim-fp1:nth-child(4n){animation-delay:0.6s}
+      .bsim-fp2:nth-child(2n){animation-delay:0.2s} .bsim-fp2:nth-child(3n){animation-delay:0.4s} .bsim-fp2:nth-child(4n){animation-delay:0.6s}
+    `}</style>
       {/* ターン・スコア行 */}
       <div className="flex items-center gap-2 px-2 py-0.5">
         <span className="text-xs text-gray-400 font-mono">T{turn}/{MAX_TURNS}</span>
@@ -1151,22 +1184,32 @@ export function BattleSim() {
           className="flex-1 h-1 accent-blue-500" style={{ touchAction: 'none' }} />
       </div>
       {/* SP行 */}
-      <div className="flex items-center gap-3 px-2 py-0.5 border-t border-gray-800">
-        <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-bold ${
-          p1SAAvail ? 'bg-yellow-900 border border-yellow-500 text-yellow-300 animate-pulse' : 'text-orange-300'
+      <div className="flex items-center gap-3 px-2 py-0.5 border-t border-gray-800 flex-wrap">
+        <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded ${
+          p1SAAvail ? 'bg-yellow-900 border border-yellow-500 animate-pulse' : ''
         }`}>
-          <span className="text-orange-400">P1</span>
-          <span>SP:</span>
-          <span className="tabular-nums">{availP1SP}</span>
-          {p1SAAvail && <span className="text-yellow-400">★SA可</span>}
+          <span className="text-orange-400 text-xs font-bold">P1 SP:</span>
+          {availP1SP > 0 ? (
+            <div className="flex flex-wrap" style={{ gap: '1px' }}>
+              {Array.from({ length: availP1SP }).map((_, i) => (
+                <div key={i} className="bsim-fp1" style={{ width: 6, height: 6, borderRadius: 1, marginRight: (i + 1) % 5 === 0 && i + 1 < availP1SP ? 3 : 0 }} />
+              ))}
+            </div>
+          ) : <span className="text-gray-600 text-xs">0</span>}
+          {p1SAAvail && <span className="text-yellow-400 text-xs font-bold">★SA可</span>}
         </div>
-        <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-bold ${
-          p2SAAvail ? 'bg-yellow-900 border border-yellow-500 text-yellow-300 animate-pulse' : 'text-blue-300'
+        <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded ${
+          p2SAAvail ? 'bg-yellow-900 border border-yellow-500 animate-pulse' : ''
         }`}>
-          <span className="text-blue-400">{cpuMode ? 'CPU' : 'P2'}</span>
-          <span>SP:</span>
-          <span className="tabular-nums">{availP2SP}</span>
-          {p2SAAvail && <span className="text-yellow-400">★SA可</span>}
+          <span className="text-blue-400 text-xs font-bold">{cpuMode ? 'CPU' : 'P2'} SP:</span>
+          {availP2SP > 0 ? (
+            <div className="flex flex-wrap" style={{ gap: '1px' }}>
+              {Array.from({ length: availP2SP }).map((_, i) => (
+                <div key={i} className="bsim-fp2" style={{ width: 6, height: 6, borderRadius: 1, marginRight: (i + 1) % 5 === 0 && i + 1 < availP2SP ? 3 : 0 }} />
+              ))}
+            </div>
+          ) : <span className="text-gray-600 text-xs">0</span>}
+          {p2SAAvail && <span className="text-yellow-400 text-xs font-bold">★SA可</span>}
         </div>
       </div>
     </div>
@@ -1226,7 +1269,7 @@ export function BattleSim() {
         )}
       </div>
       <div className="grid grid-cols-4 gap-1">
-        {p1Hand.map(id => renderHandCard(id, waitFor === 'p1' && !cpuThinking, true))}
+        {p1Hand.map(id => renderHandCard(id, waitFor === 'p1' && !cpuThinking, true, p1HandPlaceability.get(id)))}
       </div>
       {/* CPUアナウンス */}
       {cpuMessage && (
@@ -1243,18 +1286,23 @@ export function BattleSim() {
           <span>デッキ（残り{p1Pile.length}枚 / 全{p1FullDeck.length}枚）</span>
         </button>
         {showP1Pile && p1DeckDisplay.length > 0 && (
-          <div className="mt-1 max-h-28 overflow-y-auto bg-gray-950 rounded p-1">
-            {p1DeckDisplay.map(({ id, drawn }, i) => {
-              const c = cardMap.get(id);
-              return (
-                <div key={i} className={`flex items-center gap-1 py-0.5 ${drawn ? 'opacity-40' : ''}`} style={{ fontSize: '9px' }}>
-                  <span className={drawn ? 'text-gray-500 truncate' : 'text-gray-300 truncate'}>{c?.name ?? '?'}</span>
-                  {c?.hasSpecialSquare && <span className={drawn ? 'text-gray-600 flex-shrink-0' : 'text-red-400 flex-shrink-0'}>★</span>}
-                  <span className="text-gray-600 flex-shrink-0 ml-auto">{c?.size}m</span>
-                  {drawn && <span className="text-gray-700 flex-shrink-0">✓</span>}
-                </div>
-              );
-            })}
+          <div className="mt-1 max-h-40 overflow-y-auto bg-gray-950 rounded p-1">
+            <div className="grid grid-cols-3 gap-1">
+              {p1DeckDisplay.map(({ id, drawn }, i) => {
+                const c = cardMap.get(id);
+                if (!c) return null;
+                return (
+                  <div key={i} className={`bg-gray-900 rounded p-0.5 flex flex-col items-center ${drawn ? 'opacity-30 grayscale' : ''}`}>
+                    <div className="flex justify-center">
+                      <CardShape shape={c.shape} specialPos={c.specialPos} cellSize={2}
+                        p1Color="#FFE000" spColor="#FF4500" />
+                    </div>
+                    <div className="text-center truncate w-full leading-none mt-0.5" style={{ fontSize: '7px', color: drawn ? '#555' : '#aaa' }}>{c.name}</div>
+                    <div className="text-center leading-none" style={{ fontSize: '6px', color: '#666' }}>{c.size}m{c.spp > 0 ? ` S${c.spp}` : ''}</div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
       </div>
@@ -1268,7 +1316,7 @@ export function BattleSim() {
         P2手札（{p2Hand.length}枚）　SP: {availP2SP}
       </div>
       <div className="grid grid-cols-4 gap-1">
-        {p2Hand.map(id => renderHandCard(id, waitFor === 'p2' && !cpuThinking, false))}
+        {p2Hand.map(id => renderHandCard(id, waitFor === 'p2' && !cpuThinking, false, p2HandPlaceability.get(id)))}
       </div>
       {/* デッキ（全15枚・ドロー済みはグレー） */}
       <div className="mt-1">
@@ -1279,18 +1327,23 @@ export function BattleSim() {
           <span>デッキ（残り{p2Pile.length}枚 / 全{p2FullDeck.length}枚）</span>
         </button>
         {showP2Pile && p2DeckDisplay.length > 0 && (
-          <div className="mt-1 max-h-28 overflow-y-auto bg-gray-950 rounded p-1">
-            {p2DeckDisplay.map(({ id, drawn }, i) => {
-              const c = cardMap.get(id);
-              return (
-                <div key={i} className={`flex items-center gap-1 py-0.5 ${drawn ? 'opacity-40' : ''}`} style={{ fontSize: '9px' }}>
-                  <span className={drawn ? 'text-gray-500 truncate' : 'text-gray-300 truncate'}>{c?.name ?? '?'}</span>
-                  {c?.hasSpecialSquare && <span className={drawn ? 'text-gray-600 flex-shrink-0' : 'text-red-400 flex-shrink-0'}>★</span>}
-                  <span className="text-gray-600 flex-shrink-0 ml-auto">{c?.size}m</span>
-                  {drawn && <span className="text-gray-700 flex-shrink-0">✓</span>}
-                </div>
-              );
-            })}
+          <div className="mt-1 max-h-40 overflow-y-auto bg-gray-950 rounded p-1">
+            <div className="grid grid-cols-3 gap-1">
+              {p2DeckDisplay.map(({ id, drawn }, i) => {
+                const c = cardMap.get(id);
+                if (!c) return null;
+                return (
+                  <div key={i} className={`bg-gray-900 rounded p-0.5 flex flex-col items-center ${drawn ? 'opacity-30 grayscale' : ''}`}>
+                    <div className="flex justify-center">
+                      <CardShape shape={c.shape} specialPos={c.specialPos} cellSize={2}
+                        p1Color="#60a5fa" spColor="#00aaff" />
+                    </div>
+                    <div className="text-center truncate w-full leading-none mt-0.5" style={{ fontSize: '7px', color: drawn ? '#555' : '#aaa' }}>{c.name}</div>
+                    <div className="text-center leading-none" style={{ fontSize: '6px', color: '#666' }}>{c.size}m{c.spp > 0 ? ` S${c.spp}` : ''}</div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
       </div>

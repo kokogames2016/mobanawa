@@ -38,9 +38,9 @@ export function getAllValidPlacements(
   for (const rotation of ALL_ROTATIONS) {
     const shape = rotateShape(card.shape, rotation);
     const rRows = shape.length, rCols = shape[0]?.length ?? 0;
-    if (rRows > rows || rCols > cols) continue;
-    for (let y = 0; y <= rows - rRows; y++)
-      for (let x = 0; x <= cols - rCols; x++)
+    // hasAnyValidPlacement と同様に負座標から探索（回転後に先頭行/列が空のシェイプでも見逃さない）
+    for (let y = -(rRows - 1); y < rows; y++)
+      for (let x = -(rCols - 1); x < cols; x++)
         if (canPlace(grid, shape, x, y, player, isSA, false))
           results.push({ x, y, rotation });
   }
