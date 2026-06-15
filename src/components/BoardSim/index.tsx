@@ -239,9 +239,11 @@ export function BoardSim() {
   const [p1GroupFilter, setP1GroupFilter] = useState<string>('');
   const [p2GroupFilter, setP2GroupFilter] = useState<string>('');
 
-  // Task 4: hand sort
-  const [handSortKey, setHandSortKey] = useState<'id' | 'size' | 'rarity' | 'name'>('id');
-  const [handSortAsc, setHandSortAsc] = useState(true);
+  // Task 4: hand sort — P1・P2 それぞれ独立して管理
+  const [p1SortKey, setP1SortKey] = useState<'id' | 'size' | 'rarity' | 'name'>('id');
+  const [p1SortAsc, setP1SortAsc] = useState(true);
+  const [p2SortKey, setP2SortKey] = useState<'id' | 'size' | 'rarity' | 'name'>('id');
+  const [p2SortAsc, setP2SortAsc] = useState(true);
   // Task 6: deck-from-placed modal
   const [showDeckModal, setShowDeckModal] = useState(false);
   const [deckModalSelected, setDeckModalSelected] = useState<Set<string>>(new Set());
@@ -788,7 +790,11 @@ export function BoardSim() {
     const reserveSet  = new Set(player === 'p1' ? p1ReserveCardIds : p2ReserveCardIds);
     const hasDeckFilter = deckCardSet.size > 0;
 
-    // Sort function
+    // Sort function — player ごとに独立したソート設定を使用
+    const handSortKey = player === 'p1' ? p1SortKey : p2SortKey;
+    const handSortAsc = player === 'p1' ? p1SortAsc : p2SortAsc;
+    const setHandSortKey = player === 'p1' ? setP1SortKey : setP2SortKey;
+    const setHandSortAsc = player === 'p1' ? setP1SortAsc : setP2SortAsc;
     const RARITY_ORDER = { fresh: 0, rare: 1, common: 2 };
     const sortFn = (a: string, b: string) => {
       const ca = getCard(a), cb = getCard(b);

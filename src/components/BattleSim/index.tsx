@@ -124,6 +124,9 @@ export function BattleSim() {
   // フルデッキ（ドロー順を隠すために全15枚を保持）
   const [p1FullDeck, setP1FullDeck] = useState<string[]>([]);
   const [p2FullDeck, setP2FullDeck] = useState<string[]>([]);
+  // P1・P2 それぞれ独立したドロー枚数カウント（山札から手札に引いた枚数）
+  const [p1DrawnCount, setP1DrawnCount] = useState(0);
+  const [p2DrawnCount, setP2DrawnCount] = useState(0);
 
   // ゲーム終了後の遅延遷移
   const [gameEndPending, setGameEndPending] = useState(false);
@@ -158,18 +161,16 @@ export function BattleSim() {
     };
   }, [stage]);
 
-  // デッキ全15枚をスロット順（引き順）で表示
+  // デッキ全15枚をスロット順（引き順）で表示（ドロー枚数はP1・P2独立管理）
   const p1DeckDisplay = useMemo(() => {
     if (!p1FullDeck.length) return [];
-    const drawnCount = p1FullDeck.length - p1Pile.length;
-    return p1FullDeck.map((id, i) => ({ id, drawn: i < drawnCount }));
-  }, [p1FullDeck, p1Pile]);
+    return p1FullDeck.map((id, i) => ({ id, drawn: i < p1DrawnCount }));
+  }, [p1FullDeck, p1DrawnCount]);
 
   const p2DeckDisplay = useMemo(() => {
     if (!p2FullDeck.length) return [];
-    const drawnCount = p2FullDeck.length - p2Pile.length;
-    return p2FullDeck.map((id, i) => ({ id, drawn: i < drawnCount }));
-  }, [p2FullDeck, p2Pile]);
+    return p2FullDeck.map((id, i) => ({ id, drawn: i < p2DrawnCount }));
+  }, [p2FullDeck, p2DrawnCount]);
 
   // 手札の配置可能性（通常・SA）
   const p1HandPlaceability = useMemo(() => {
@@ -270,6 +271,8 @@ export function BattleSim() {
     setP2Placed([]);
     setP1FullDeck(p1Shuffled);
     setP2FullDeck(p2Shuffled);
+    setP1DrawnCount(HAND_SIZE);
+    setP2DrawnCount(HAND_SIZE);
     setGameEndPending(false);
     clearBattleState();
     setScreen('battle');
@@ -288,11 +291,13 @@ export function BattleSim() {
       p2SPCounted: [...p2SPCounted.current],
       cpuMode, cpuLevel, stageId, p1DeckId, p2DeckId,
       p1FullDeck, p2FullDeck,
+      p1DrawnCount, p2DrawnCount,
     };
     try { localStorage.setItem(BATTLE_SAVE_KEY, JSON.stringify(save)); } catch {}
   }, [screen, grid, p1Hand, p2Hand, p1Pile, p2Pile, turn, waitFor, p1Action,
       p1SPAccum, p2SPAccum, p1SPSpent, p2SPSpent, p1SACount, p2SACount,
-      reshuffled, p1Placed, p2Placed, cpuMode, cpuLevel, stageId, p1DeckId, p2DeckId]);
+      reshuffled, p1Placed, p2Placed, cpuMode, cpuLevel, stageId, p1DeckId, p2DeckId,
+      p1DrawnCount, p2DrawnCount]);
 
   // ── localStorage 復元（マウント時1回） ────────────────────────────────────
   useEffect(() => {
@@ -329,6 +334,8 @@ export function BattleSim() {
       if (d.p2DeckId !== undefined) setP2DeckId(d.p2DeckId);
       if (d.p1FullDeck) setP1FullDeck(d.p1FullDeck);
       if (d.p2FullDeck) setP2FullDeck(d.p2FullDeck);
+      if (d.p1DrawnCount !== undefined) setP1DrawnCount(d.p1DrawnCount);
+      if (d.p2DrawnCount !== undefined) setP2DrawnCount(d.p2DrawnCount);
       setCpuThinking(false); setPending(null); setHover(null);
       setP1Sel(null); setP2Sel(null); setP1SAMode(false); setP2SAMode(false);
       setShowExitConfirm(false); setTrashMode(null); setCpuMessage(null);
@@ -392,6 +399,7 @@ export function BattleSim() {
     const { newHand, newPile } = drawCard(pending.cardId, p1Hand, p1Pile);
     setP1Hand(newHand);
     setP1Pile(newPile);
+    if (p1Pile.length > 0) setP1DrawnCount(c => c + 1);
     setP1Action(action);
     setP1Sel(null); setPending(null); setHover(null); setP1SAMode(false);
     setWaitFor('p2');
@@ -443,7 +451,7 @@ export function BattleSim() {
       const afterTrash = [...p1Hand];
       let newP1Pile = p1Pile;
       if (trashIdx !== -1) {
-        if (p1Pile.length > 0) { afterTrash[trashIdx] = p1Pile[0]; newP1Pile = p1Pile.slice(1); }
+        if (p1Pile.length > 0) { afterTrash[trashIdx] = p1Pile[0]; newP1Pile = p1Pile.slice(1); setP1DrawnCount(c => c + 1); }
         else afterTrash.splice(trashIdx, 1);
       }
       const newP1Hand = afterTrash;
@@ -459,7 +467,7 @@ export function BattleSim() {
       const afterTrash2 = [...p2Hand];
       let newP2Pile = p2Pile;
       if (trashIdx2 !== -1) {
-        if (p2Pile.length > 0) { afterTrash2[trashIdx2] = p2Pile[0]; newP2Pile = p2Pile.slice(1); }
+        if (p2Pile.length > 0) { afterTrash2[trashIdx2] = p2Pile[0]; newP2Pile = p2Pile.slice(1); setP2DrawnCount(c => c + 1); }
         else afterTrash2.splice(trashIdx2, 1);
       }
       const newP2Hand = afterTrash2;
@@ -530,10 +538,12 @@ export function BattleSim() {
       // ★パス時は stale closure の p2Hand を直接使わず同期的に計算する
       let finalP2Hand: string[];
       let finalP2Pile: string[];
+      let p2Drew = false;
       if (move !== 'pass') {
         const { newHand, newPile } = drawCard(move.cardId, p2Hand, p2Pile);
         finalP2Hand = newHand;
         finalP2Pile = newPile;
+        p2Drew = p2Pile.length > 0;
       } else {
         // トラッシュ後、山札から1枚ドロー（手札4枚を維持）
         const trashId = pickCardToTrash(p2Hand, cardMap);
@@ -541,6 +551,7 @@ export function BattleSim() {
         if (afterTrash.length < HAND_SIZE && p2Pile.length > 0) {
           finalP2Hand = [...afterTrash, p2Pile[0]];
           finalP2Pile = p2Pile.slice(1);
+          p2Drew = true;
         } else {
           finalP2Hand = afterTrash;
           finalP2Pile = p2Pile;
@@ -551,6 +562,7 @@ export function BattleSim() {
       setGrid(newGrid);
       setP2Hand(finalP2Hand);
       setP2Pile(finalP2Pile);
+      if (p2Drew) setP2DrawnCount(c => c + 1);
       setCpuThinking(false);
       advanceTurn(newGrid);
     }, CPU_DELAY);
@@ -571,6 +583,7 @@ export function BattleSim() {
     setP2Placed(prev => [...prev, { cardId: pending.cardId, isSA: pending.isSA }]);
     const { newHand, newPile } = drawCard(pending.cardId, p2Hand, p2Pile);
     setP2Hand(newHand); setP2Pile(newPile);
+    if (p2Pile.length > 0) setP2DrawnCount(c => c + 1);
 
     const newGrid = resolveSimultaneous(
       grid,

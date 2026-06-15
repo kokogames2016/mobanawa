@@ -194,8 +194,10 @@ export function resolveSimultaneous(
     const [gr, gc] = key.split(',').map(Number);
 
     if (p1SP && p2SP) {
-      // Both SP → blocked (石)
-      newGrid[gr][gc] = 'blocked';
+      // Both SP → same rule as normal vs normal: smaller size wins
+      if (p1Size < p2Size) newGrid[gr][gc] = 'p1_sp';
+      else if (p2Size < p1Size) newGrid[gr][gc] = 'p2_sp';
+      else newGrid[gr][gc] = 'blocked';
     } else if (p1SP && !p2SP) {
       // p1 SP beats p2 normal
       newGrid[gr][gc] = 'p1_sp';

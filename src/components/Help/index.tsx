@@ -111,6 +111,13 @@ export function Help() {
           </div>
         </section>
 
+        <section>
+          <h2 className="text-base font-bold text-orange-400 mb-2">更新履歴</h2>
+          <div className="text-gray-500 text-xs">
+            ※ 公開後のアップデート情報をこちらに記載していきます。
+          </div>
+        </section>
+
       </div>
     </div>
   );
