@@ -161,16 +161,23 @@ export function BattleSim() {
     };
   }, [stage]);
 
-  // デッキ全15枚をスロット順（引き順）で表示（ドロー枚数はP1・P2独立管理）
+  // cards登録順のインデックスマップ（ドロー順を隠すため表示ソートに使用）
+  const cardOrderMap = useMemo(() => new Map(cards.map((c, i) => [c.id, i])), [cards]);
+
+  // デッキ全15枚をcards登録順で表示（ドロー順を隠す）
   const p1DeckDisplay = useMemo(() => {
     if (!p1FullDeck.length) return [];
-    return p1FullDeck.map((id, i) => ({ id, drawn: i < p1DrawnCount }));
-  }, [p1FullDeck, p1DrawnCount]);
+    return p1FullDeck
+      .map((id, i) => ({ id, drawn: i < p1DrawnCount }))
+      .sort((a, b) => (cardOrderMap.get(a.id) ?? 0) - (cardOrderMap.get(b.id) ?? 0));
+  }, [p1FullDeck, p1DrawnCount, cardOrderMap]);
 
   const p2DeckDisplay = useMemo(() => {
     if (!p2FullDeck.length) return [];
-    return p2FullDeck.map((id, i) => ({ id, drawn: i < p2DrawnCount }));
-  }, [p2FullDeck, p2DrawnCount]);
+    return p2FullDeck
+      .map((id, i) => ({ id, drawn: i < p2DrawnCount }))
+      .sort((a, b) => (cardOrderMap.get(a.id) ?? 0) - (cardOrderMap.get(b.id) ?? 0));
+  }, [p2FullDeck, p2DrawnCount, cardOrderMap]);
 
   // 手札の配置可能性（通常・SA）
   const p1HandPlaceability = useMemo(() => {
