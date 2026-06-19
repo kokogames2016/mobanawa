@@ -25,10 +25,10 @@ const tap: React.CSSProperties = { touchAction: 'manipulation', cursor: 'pointer
 // ─── 対戦状態の永続化 ─────────────────────────────────────────────────────────
 const BATTLE_SAVE_KEY = 'nawabattler_battle_v1';
 
-// ─── セルの色 ─────────────────────────────────────────────────────────────────
+// ─── セルの色（試し置きモードと統一） ─────────────────────────────────────────
 const CELL_COLOR: Record<CellState, string> = {
-  E: '#2a2a2a', W: '#111', B: '#D0D0D0', blocked: '#E0E0E0',
-  p1: '#b35c00', p1_sp: '#ff4500', p2: '#00308f', p2_sp: '#00aaff',
+  E: '#1a3a1a', W: '#333333', B: '#555555', blocked: '#999999',
+  p1: '#FFE000', p1_sp: '#FF4500', p2: '#0044FF', p2_sp: '#00CCFF',
 };
 
 // ─── 型 ───────────────────────────────────────────────────────────────────────
@@ -178,6 +178,12 @@ export function BattleSim() {
       .map((id, i) => ({ id, drawn: i < p2DrawnCount }))
       .sort((a, b) => (cardOrderMap.get(a.id) ?? 0) - (cardOrderMap.get(b.id) ?? 0));
   }, [p2FullDeck, p2DrawnCount, cardOrderMap]);
+
+  // 活性化済みSPマス（フレームオーバーレイ用）
+  const activatedSPPos = useMemo(() =>
+    screen === 'battle' ? getActivatedSPPositions(grid) : null,
+    [grid, screen]
+  );
 
   // 手札の配置可能性（通常・SA）
   const p1HandPlaceability = useMemo(() => {
@@ -635,11 +641,10 @@ export function BattleSim() {
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const cell = grid[r]?.[c] ?? 'E';
-        ctx.fillStyle = CELL_COLOR[cell] ?? '#2a2a2a';
+        ctx.fillStyle = CELL_COLOR[cell] ?? '#1a3a1a';
         ctx.fillRect(c*cellSize, r*cellSize, cellSize, cellSize);
-        // 壁・障害物マスはグリッド線を描かない（試し置きモードと統一）
-        if (cell !== 'W' && cell !== 'B' && cell !== 'blocked') {
-          ctx.strokeStyle = '#444';
+        if (cell !== 'W') {
+          ctx.strokeStyle = '#111';
           ctx.lineWidth = 0.5;
           ctx.strokeRect(c*cellSize, r*cellSize, cellSize, cellSize);
         }
@@ -651,8 +656,10 @@ export function BattleSim() {
     const activeSel    = activePlayer === 'p1' ? p1Sel : p2Sel;
     const activeRot    = activePlayer === 'p1' ? p1Rot : p2Rot;
     const activeSA     = activePlayer === 'p1' ? p1SAMode : p2SAMode;
-    const hoverColor   = activePlayer === 'p1' ? 'rgba(255,140,0,0.4)' : 'rgba(0,80,200,0.4)';
-    const invalidColor = 'rgba(200,0,0,0.3)';
+    const hoverColor   = activeSA
+      ? (activePlayer === 'p1' ? 'rgba(220,50,50,0.55)' : 'rgba(160,50,220,0.55)')
+      : (activePlayer === 'p1' ? 'rgba(255,140,0,0.5)' : 'rgba(0,170,255,0.5)');
+    const invalidColor = 'rgba(255,0,0,0.4)';
 
     if (activeSel && hover && !pending) {
       const card = cardMap.get(activeSel);
@@ -685,24 +692,19 @@ export function BattleSim() {
             case 270: rotSP = [origCols-1-sc, sr]; break;
           }
         }
-        ctx.lineWidth = 2;
+        // 試し置きモードと同じ色・スタイル
+        const pColor = pending.isSA
+          ? (pending.player === 'p1' ? 'rgba(220,50,50,0.55)' : 'rgba(160,50,220,0.55)')
+          : (pending.player === 'p1' ? 'rgba(255,140,0,0.5)' : 'rgba(0,170,255,0.5)');
+        const pSpColor = pending.isSA
+          ? (pending.player === 'p1' ? 'rgba(255,80,0,0.8)' : 'rgba(200,0,255,0.8)')
+          : (pending.player === 'p1' ? 'rgba(255,69,0,0.7)' : 'rgba(0,204,255,0.7)');
         for (let r = 0; r < shape.length; r++)
           for (let c = 0; c < (shape[r]?.length ?? 0); c++)
             if (shape[r][c]) {
               const isSPCell = rotSP && rotSP[0] === r && rotSP[1] === c;
-              if (isSPCell) {
-                // SPマスは強調色
-                ctx.fillStyle = pending.player === 'p1' ? 'rgba(255,69,0,0.85)' : 'rgba(0,170,255,0.85)';
-                ctx.strokeStyle = pending.player === 'p1' ? '#ff4500' : '#00ccff';
-              } else if (pending.isValid) {
-                ctx.fillStyle   = pending.player === 'p1' ? 'rgba(255,180,0,0.65)' : 'rgba(0,150,255,0.65)';
-                ctx.strokeStyle = pending.player === 'p1' ? '#ffaa00' : '#00aaff';
-              } else {
-                ctx.fillStyle   = 'rgba(220,40,40,0.55)';
-                ctx.strokeStyle = '#ff4444';
-              }
+              ctx.fillStyle = !pending.isValid ? 'rgba(255,0,0,0.4)' : (isSPCell ? pSpColor : pColor);
               ctx.fillRect((pending.x+c)*cellSize, (pending.y+r)*cellSize, cellSize, cellSize);
-              ctx.strokeRect((pending.x+c)*cellSize+1, (pending.y+r)*cellSize+1, cellSize-2, cellSize-2);
             }
       }
     }
@@ -1272,6 +1274,19 @@ export function BattleSim() {
           className="cursor-crosshair border border-gray-700 touch-none"
           style={{ imageRendering:'pixelated', display:'block' }}
         />
+        {/* 活性化SPマス フレームオーバーレイ（試し置きモードと統一） */}
+        {activatedSPPos && (
+          <div style={{ position:'absolute', top:0, left:0, pointerEvents:'none' }}>
+            {activatedSPPos.p1.map(([r,c]) => (
+              <div key={`p1sp-${r}-${c}`} className="bsim-fp1"
+                style={{ position:'absolute', left:c*cellSize, top:r*cellSize, width:cellSize, height:cellSize, opacity:0.75 }} />
+            ))}
+            {activatedSPPos.p2.map(([r,c]) => (
+              <div key={`p2sp-${r}-${c}`} className="bsim-fp2"
+                style={{ position:'absolute', left:c*cellSize, top:r*cellSize, width:cellSize, height:cellSize, opacity:0.75 }} />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
