@@ -113,8 +113,19 @@ export function Help() {
 
         <section>
           <h2 className="text-base font-bold text-orange-400 mb-2">更新履歴</h2>
-          <div className="text-gray-500 text-xs">
-            ※ 公開後のアップデート情報をこちらに記載していきます。
+          <div className="space-y-3 text-xs text-gray-400">
+            <div>
+              <div className="font-bold text-gray-300 mb-1">2026/06/20</div>
+              <ul className="space-y-1 list-disc list-inside text-gray-400">
+                <li>試し置き・対戦モード：SA配置時にSPマス（自陣・敵陣問わず）を上書きできるバグを修正</li>
+              </ul>
+            </div>
+            <div>
+              <div className="font-bold text-gray-300 mb-1">2026/06/18</div>
+              <ul className="space-y-1 list-disc list-inside text-gray-400">
+                <li>対戦モード：ステージのデザインを試し置きと統一（マス・グリッド線・配置プレビューの見た目を統一、SA配置時のプレビュー色を追加、SP発動時のエフェクトを追加）</li>
+              </ul>
+            </div>
           </div>
         </section>
 
