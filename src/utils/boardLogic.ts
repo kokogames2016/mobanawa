@@ -26,9 +26,9 @@ export function canPlace(
       // Always block walls, stage obstacles, and collision stones
       if (cell === 'W' || cell === 'B' || cell === 'blocked') return false;
       if (isSpecial) {
-        // SA: can overwrite own cells (normal+SP) and opponent normal cells
-        // Only opponent SP squares (and walls/blocked handled above) are blocked
-        if (cell === oppSP) return false;
+        // SA: can overwrite own/opponent normal cells only
+        // SP squares (own and opponent) are always blocked
+        if (cell === ownSP || cell === oppSP) return false;
       } else {
         // Normal: all occupied cells blocked
         if (cell === 'p1' || cell === 'p2' || cell === 'p1_sp' || cell === 'p2_sp') return false;
