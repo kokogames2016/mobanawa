@@ -254,13 +254,103 @@ function countAdjToBlockedNearP1(newGrid: CellState[][]): number {
   return bonus;
 }
 
+// ─── SP発火評価ヘルパー ──────────────────────────────────────────────────────
+
+/** P2 SPマスが今回の配置で新たに発火（周囲8マスが全て非空）した数を返す */
+function countNewlyFiredSP(prevGrid: CellState[][], newGrid: CellState[][]): number {
+  const rows = newGrid.length, cols = newGrid[0]?.length ?? 0;
+  let count = 0;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      if (newGrid[r][c] !== 'p2_sp') continue;
+      // 配置前は未発火、配置後に発火した → 新規発火
+      const wasFired = (() => {
+        for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+          if (dr === 0 && dc === 0) continue;
+          const nr = r+dr, nc = c+dc;
+          if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && prevGrid[nr][nc] === 'E') return false;
+        }
+        return true;
+      })();
+      if (wasFired) continue;
+      let nowFired = true;
+      for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+        if (dr === 0 && dc === 0) continue;
+        const nr = r+dr, nc = c+dc;
+        if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && newGrid[nr][nc] === 'E') { nowFired = false; break; }
+      }
+      if (nowFired) count++;
+    }
+  }
+  return count;
+}
+
+/**
+ * 残り手札で次ターン以降にSPを発火できそうか評価するスコア。
+ * 発火まで残り空きマス数と残り手札サイズで近似判定。
+ */
+function scoreSpFirePotential(
+  newGrid: CellState[][],
+  remainingHand: string[],
+  cardMap: Map<string, Card>
+): number {
+  if (remainingHand.length === 0) return 0;
+  const rows = newGrid.length, cols = newGrid[0]?.length ?? 0;
+  // 残り手札で埋めることができる合計マス数（近似）
+  const maxHandCoverage = remainingHand.reduce((sum, id) => sum + (cardMap.get(id)?.size ?? 0), 0);
+
+  let score = 0;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      if (newGrid[r][c] !== 'p2_sp') continue;
+      let emptyCount = 0;
+      for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+        if (dr === 0 && dc === 0) continue;
+        const nr = r+dr, nc = c+dc;
+        if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && newGrid[nr][nc] === 'E') emptyCount++;
+      }
+      if (emptyCount === 0) continue; // 発火済み（countNewlyFiredSPで計上）
+      if (emptyCount > maxHandCoverage) continue; // 手札で埋められない（近似）
+      // 残り空きマスが少ないほど高スコア（次ターン発火に近い）
+      if (emptyCount === 1) score += 6;
+      else if (emptyCount === 2) score += 3;
+      else if (emptyCount === 3) score += 1;
+    }
+  }
+  return score;
+}
+
+/** 序盤（T1-4）に自分のSPマスを敵陣側に置くペナルティ */
+function scoreSPExposurePenalty(
+  grid: CellState[][], newGrid: CellState[][],
+  si: StageInfo | undefined,
+  currentTurn: number
+): number {
+  if (!si || currentTurn > 4) return 0;
+  const rows = newGrid.length, cols = newGrid[0]?.length ?? 0;
+  let penalty = 0;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      if (newGrid[r][c] !== 'p2_sp') continue;
+      if (grid[r]?.[c] === 'p2_sp') continue; // 以前から存在するSPマスはスキップ
+      // frontierNorm: 0=P2陣営, 1=P1陣営
+      const fn = frontierNorm(r, si);
+      if (fn > 0.6) penalty += 5;      // 完全に敵陣側
+      else if (fn > 0.5) penalty += 2; // 中央より敵陣寄り
+    }
+  }
+  return penalty;
+}
+
 // ─── 通常配置スコア（フェーズ別戦略） ────────────────────────────────────────
 
 function scoreNormalMove(
   grid: CellState[][], card: Card,
   x: number, y: number, rotation: Rotation,
   level: CpuLevel, remainingTurns: number,
-  si: StageInfo | undefined
+  si: StageInfo | undefined,
+  remainingHand?: string[],
+  cardMap?: Map<string, Card>
 ): number {
   const newGrid = simulateGrid(grid, card, x, y, rotation, 'p2');
   const rows = newGrid.length, cols = newGrid[0]?.length ?? 0;
@@ -308,6 +398,17 @@ function scoreNormalMove(
   const currentTurn = maxTurns - remainingTurns;
   const isEarly = currentTurn <= 4;
   const isMid   = currentTurn > 4 && currentTurn <= 8;
+
+  // ── SP発火評価 ─────────────────────────────────────────────────────────────
+  const newlyFiredSP = countNewlyFiredSP(grid, newGrid);
+  // 同時発火（2マス以上）は最優先ボーナス
+  const simultaneousFireBonus = newlyFiredSP >= 2 ? 35 : newlyFiredSP === 1 ? 12 : 0;
+  // 残り手札で次ターン発火できるか（手札連動評価）
+  const nearFireScore = (remainingHand && cardMap)
+    ? scoreSpFirePotential(newGrid, remainingHand, cardMap)
+    : 0;
+  // 序盤SPマス露出ペナルティ
+  const spExposurePenalty = scoreSPExposurePenalty(grid, newGrid, si, currentTurn);
 
   // ── ターン1・2 特別ボーナス ──────────────────────────────────────────────
   // ターン1：なるべく敵陣に近い位置へ（全レベル共通、frontier最大化）
@@ -373,33 +474,47 @@ function scoreNormalMove(
       const attack = (adjToP1 * 4 + (si ? frontierMax * 6 : 0) + p1AdjSP * 3) * aggrFactor;
       const fill   = isMid ? newCells * 1.0 : 0;
       return attack + fill + p2Space * 1 + continuity * 0.3 + wallBonusVal * 0.5
+        + simultaneousFireBonus * 0.5 + nearFireScore * 0.3
         + turn1FrontierBonus + turn2Bonus;
     }
 
     // ── Lv2：コントロール ─────────────────────────────────────────────────────
     case 2: {
       if (isTurn1) {
-        // ターン1：敵陣に踏み出しつつも自陣展開（Lv2らしくフロンティア低め）
+        // ターン1：自陣展開＋SP露出回避
         const def = si ? p2HalfCells * 2 + wallDensity * 1 : continuity * 1;
-        return newCells * 2 + def + p2Space * 1 + turn1FrontierBonus * 0.4;
+        return newCells * 2 + def + p2Space * 1 + turn1FrontierBonus * 0.4
+          - spExposurePenalty;
       } else if (isTurn2) {
         // ターン2：防衛か継続かを切り替え
         if (turn2DefenseMode) {
           const def = si ? p2HalfCells * 3 + wallDensity * 2 : continuity * 2;
-          return surrounded * 8 + newSP * 4 + def + p2Space * 1 + turn2Bonus + wallBonusVal;
+          return simultaneousFireBonus * 1.2 + nearFireScore * 0.8
+            + surrounded * 8 + newSP * 4 + def + p2Space * 1
+            + turn2Bonus + wallBonusVal - spExposurePenalty;
         } else {
           const def = si ? p2HalfCells * 2 + wallDensity * 1 : continuity * 1;
-          return surrounded * 8 + newSP * 4 + def + p2Space * 1 + turn2Bonus;
+          return simultaneousFireBonus * 1.2 + nearFireScore * 0.8
+            + surrounded * 8 + newSP * 4 + def + p2Space * 1
+            + turn2Bonus - spExposurePenalty;
         }
       } else if (isEarly) {
+        // 序盤：壁形成＋SP発火準備＋露出回避
         const def = si ? p2HalfCells * 3 + wallDensity * 2 : continuity * 2;
         const risk = si ? frontierMax * -6 : 0;
-        return surrounded * 8 + newSP * 4 + def + p2Space * 1 + risk + wallBonusVal;
+        return simultaneousFireBonus * 1.5 + nearFireScore * 1.2
+          + surrounded * 8 + newSP * 4 + def + p2Space * 1
+          + risk + wallBonusVal - spExposurePenalty;
       } else if (isMid) {
+        // 中盤：発火最優先
         const fillEfficiency = newCells * 2.5 + p2HalfCells * 2 + wallDensity * 1.5;
-        return surrounded * 10 + newSP * 5 + fillEfficiency + p2Space * 1 + wallBonusVal + innerWallVal;
+        return simultaneousFireBonus * 2.0 + nearFireScore * 1.5
+          + surrounded * 10 + newSP * 5 + fillEfficiency + p2Space * 1
+          + wallBonusVal + innerWallVal;
       } else {
-        return surrounded * 12 + newSP * 6 + newCells * 1.0 + p2Space * 1;
+        // 終盤：発火＋占領
+        return simultaneousFireBonus * 2.0 + nearFireScore * 1.0
+          + surrounded * 12 + newSP * 6 + newCells * 1.0 + p2Space * 1;
       }
     }
 
@@ -411,7 +526,8 @@ function scoreNormalMove(
       const fillB = isMid ? (newCells * 1.5 + wallDensity * 1.0) : 0;
       const aw = p1Total > p2Total ? 0.65 : p2Total > p1Total ? 0.35 : 0.5;
       return (aw * agg + (1-aw) * ctl) * 2 + p2Space * 2 - p1Opps * 0.3 + fillB + wallBonusVal
-        + turn1FrontierBonus * 0.7 + turn2Bonus * 0.8;
+        + simultaneousFireBonus * 1.2 + nearFireScore * 0.8
+        + turn1FrontierBonus * 0.7 + turn2Bonus * 0.8 - spExposurePenalty * 0.5;
     }
 
     // ── Lv4：先読み ───────────────────────────────────────────────────────────
@@ -421,7 +537,8 @@ function scoreNormalMove(
       const base        = adjToP1 * 2 + newCells * 2 + newSP * 5 + p1SPKilled * 6
                           + routeBlock - p1Opps * 1.5;
       return base + p2Space * 3 + fillB + wallBonusVal + innerWallVal
-        + turn1FrontierBonus * 0.6 + turn2Bonus * 0.9;
+        + simultaneousFireBonus * 2.5 + nearFireScore * 2.0
+        + turn1FrontierBonus * 0.6 + turn2Bonus * 0.9 - spExposurePenalty;
     }
   }
 }
@@ -431,19 +548,56 @@ function scoreNormalMove(
 function scoreSAMove(
   grid: CellState[][], card: Card,
   x: number, y: number, rotation: Rotation,
-  level: CpuLevel
+  level: CpuLevel,
+  isFinalTurn: boolean
 ): number {
   const newGrid  = simulateGrid(grid, card, x, y, rotation, 'p2');
   const overwrites = countP1Overwrites(grid, card, x, y, rotation);
-  const p2Space  = countP2ReachableSpace(newGrid);
-  let newCells   = 0;
-  const rows=newGrid.length,cols=newGrid[0]?.length??0;
-  for (let r=0;r<rows;r++) for (let c=0;c<cols;c++) {
-    const was=grid[r]?.[c],now=newGrid[r]?.[c];
-    if ((now==='p2'||now==='p2_sp')&&(was!=='p2'&&was!=='p2_sp')) newCells++;
+  const rows = newGrid.length, cols = newGrid[0]?.length ?? 0;
+  let newCells = 0;
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    const was = grid[r]?.[c], now = newGrid[r]?.[c];
+    if ((now === 'p2' || now === 'p2_sp') && (was !== 'p2' && was !== 'p2_sp')) newCells++;
   }
-  const levelBonus = level===4 ? 5 : level===3 ? 3 : level===2 ? 2 : 0;
-  return overwrites * 5 + newCells * 2 + p2Space * 1 + levelBonus;
+
+  // 最終ターン：獲得マス数 + 奪取マス数のみで評価
+  if (isFinalTurn) {
+    return newCells + overwrites * 2;
+  }
+
+  // SA後に新たに発火するP2 SPマス数
+  const newlyFiredSP = countNewlyFiredSP(grid, newGrid);
+
+  // カード自身のSPマスがSA配置で同時発火するか（実質消費SP-1相当）
+  let cardSPFired = false;
+  if (card.specialPos && card.shape) {
+    const origRows = card.shape.length, origCols = card.shape[0]?.length ?? 0;
+    const [sr, sc] = card.specialPos;
+    let rr: number, rc: number;
+    switch (rotation) {
+      case 90:  rr = sc; rc = origRows - 1 - sr; break;
+      case 180: rr = origRows - 1 - sr; rc = origCols - 1 - sc; break;
+      case 270: rr = origCols - 1 - sc; rc = sr; break;
+      default:  rr = sr; rc = sc;
+    }
+    const gr = y + rr, gc = x + rc;
+    if (gr >= 0 && gr < rows && gc >= 0 && gc < cols && newGrid[gr][gc] === 'p2_sp') {
+      let fired = true;
+      for (let dr = -1; dr <= 1 && fired; dr++) for (let dc = -1; dc <= 1 && fired; dc++) {
+        if (dr === 0 && dc === 0) continue;
+        const nr = gr+dr, nc = gc+dc;
+        if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && newGrid[nr][nc] === 'E') fired = false;
+      }
+      cardSPFired = fired;
+    }
+  }
+
+  // SP2個以上同時発火は高評価
+  const fireBonus = newlyFiredSP >= 2 ? newlyFiredSP * 12 : newlyFiredSP * 8;
+  const selfSPBonus = cardSPFired ? 10 : 0;
+  const levelBonus = level === 4 ? 5 : level === 3 ? 3 : level === 2 ? 2 : 0;
+  const p2Space = countP2ReachableSpace(newGrid);
+  return overwrites * 5 + newCells * 2 + p2Space * 1 + fireBonus + selfSPBonus + levelBonus;
 }
 
 // ─── CPU最善手計算 ────────────────────────────────────────────────────────────
@@ -460,9 +614,11 @@ export function computeCpuMove(
   const maxTurns    = 12;
   const currentTurn = maxTurns - remainingTurns;
   const isLate      = currentTurn > 8;
+  const isFinalTurn = currentTurn === 12;
   // 終盤（T9-12）は全レベルでSA積極検討
   // Lv2はT5以降からSA検討開始（計画的SA）
-  const considerSA  = (isLate) || (level === 2 && currentTurn > 4) || level === 4;
+  // 最終ターンは全レベルで必ずSA検討
+  const considerSA  = isFinalTurn || isLate || (level === 2 && currentTurn > 4) || level === 4;
 
   let bestNormalScore = -Infinity, bestNormalMove: CpuMove | null = null;
   let bestSAScore     = -Infinity, bestSAMove:     CpuMove | null = null;
@@ -471,9 +627,15 @@ export function computeCpuMove(
     const card = cardMap.get(cardId);
     if (!card?.shape) continue;
 
+    const isSWCard = !card.specialPos; // SPマスを持たないカード
+
     // 通常配置（全4回転×全座標）
+    // このカードを使った後の残り手札（SP発火ポテンシャル評価用）
+    const remainingHand = hand.filter(id => id !== cardId);
     for (const { x, y, rotation } of getAllValidPlacements(grid, card, 'p2', false)) {
-      const s = scoreNormalMove(grid, card, x, y, rotation, level, remainingTurns, stageInfo);
+      let s = scoreNormalMove(grid, card, x, y, rotation, level, remainingTurns, stageInfo, remainingHand, cardMap);
+      // SWカードは通常配置を抑制してSAに誘導（SA選択肢がある場合のみ意味を持つ）
+      if (isSWCard && considerSA && card.spp > 0 && availableSP >= card.spp) s -= 6;
       if (s > bestNormalScore || (s === bestNormalScore && Math.random() < 0.15)) {
         bestNormalScore = s;
         bestNormalMove  = { cardId, x, y, rotation, isSA: false, cardName: card.name };
@@ -483,7 +645,9 @@ export function computeCpuMove(
     // SA配置
     if (considerSA && card.spp > 0 && availableSP >= card.spp) {
       for (const { x, y, rotation } of getAllValidPlacements(grid, card, 'p2', true)) {
-        const s = scoreSAMove(grid, card, x, y, rotation, level);
+        let s = scoreSAMove(grid, card, x, y, rotation, level, isFinalTurn);
+        // SWカードのSA優先ボーナス（SPマスを持たないためSA使用が最も効率的）
+        if (isSWCard) s += 8;
         if (s > bestSAScore) {
           bestSAScore = s;
           bestSAMove  = { cardId, x, y, rotation, isSA: true, cardName: card.name };
@@ -494,11 +658,19 @@ export function computeCpuMove(
 
   if (bestNormalMove === null) return bestSAMove ?? 'pass';
 
-  // 終盤SA優先閾値：全レベルで SA を積極利用
-  // Lv2は閾値ゼロ（SA ≥ Normal なら使う）、Lv1は慎重（大幅に良い場合のみ）
-  if (bestSAMove !== null && isLate) {
-    const threshold = level === 1 ? 12 : level === 2 ? -2 : level === 3 ? 2 : -3;
-    if (bestSAScore >= bestNormalScore + threshold) return bestSAMove;
+  // SA優先閾値
+  if (bestSAMove !== null) {
+    if (isFinalTurn) {
+      // 最終ターン：SPが使えるなら積極的にSA（スコア0超なら常に選択）
+      if (bestSAScore > 0) return bestSAMove;
+    } else if (isLate) {
+      // 終盤（T9-11）：全レベルで積極SA
+      const threshold = level === 1 ? 12 : level === 2 ? -2 : level === 3 ? 2 : -3;
+      if (bestSAScore >= bestNormalScore + threshold) return bestSAMove;
+    } else if (level === 2 && currentTurn > 4) {
+      // Lv2中盤：発火準備を優先。SA使用は通常より大きく有利な場合のみ
+      if (bestSAScore >= bestNormalScore + 15) return bestSAMove;
+    }
   }
 
   return bestNormalMove;
