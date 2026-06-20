@@ -1508,13 +1508,18 @@ export function BattleSim() {
     const showSPCharge = animPhase === 'sp-fire' && animSpFlash;
     const p1Card = showContent && animData!.p1CardId ? cardMap.get(animData!.p1CardId) : null;
     const p2Card = showContent && animData!.p2CardId ? cardMap.get(animData!.p2CardId) : null;
+    // スマホ（portrait）は小さく、PC（landscape）はそのまま
+    const cardCellSize = isLandscape ? 4 : 2;
+    const panelWidth   = isLandscape ? 96 : 64;
+    const cardPad      = isLandscape ? '6px 8px' : '3px 4px';
+    const nameMaxW     = isLandscape ? 84 : 56;
     return (
       <div style={{
         display:'flex', flexDirection:'column', justifyContent:'space-around', alignItems:'center',
-        width:96, minWidth:96, flexShrink:0,
+        width:panelWidth, minWidth:panelWidth, flexShrink:0,
         background: showContent ? 'rgba(10,10,20,0.92)' : 'transparent',
         borderLeft: showContent ? '1px solid #333' : 'none',
-        padding: showContent ? '8px 4px' : '0', gap:8,
+        padding: showContent ? (isLandscape ? '8px 4px' : '4px 2px') : '0', gap: isLandscape ? 8 : 4,
       }}>
         {showContent && (
           <>
@@ -1524,15 +1529,15 @@ export function BattleSim() {
               style={{
                 background:'rgba(0,10,30,0.95)',
                 border:`2px solid ${animData!.p2isSA ? '#FF4500' : '#0088FF'}`,
-                borderRadius:8, padding:'6px 8px', width:'100%',
+                borderRadius:8, padding:cardPad, width:'100%',
               }}>
               <div className="text-blue-400 font-bold text-xs mb-1">
                 {cpuMode ? 'CPU' : 'P2'}{animData!.p2isSA ? ' ⚡SA' : ''}
               </div>
               {p2Card
                 ? <>
-                    <CardShape shape={p2Card.shape} specialPos={p2Card.specialPos} cellSize={4} p1Color="#0044FF" spColor="#00CCFF" />
-                    <div className="text-white text-xs font-bold mt-1 text-center" style={{ maxWidth:84, wordBreak:'break-all' }}>{p2Card.name}</div>
+                    <CardShape shape={p2Card.shape} specialPos={p2Card.specialPos} cellSize={cardCellSize} p1Color="#0044FF" spColor="#00CCFF" />
+                    <div className="text-white font-bold mt-1 text-center" style={{ fontSize: isLandscape ? '12px' : '9px', maxWidth:nameMaxW, wordBreak:'break-all' }}>{p2Card.name}</div>
                   </>
                 : <div className="text-gray-400 text-xs">パス</div>
               }
@@ -1540,10 +1545,10 @@ export function BattleSim() {
             {/* SP CHARGE テキスト（sp-fireフェーズのみ・カードパネル内に表示） */}
             {showSPCharge && (
               <div style={{
-                background:'rgba(0,30,60,0.95)', borderRadius:6, padding:'5px 6px',
+                background:'rgba(0,30,60,0.95)', borderRadius:6, padding: isLandscape ? '5px 6px' : '3px 4px',
                 border:'1px solid rgba(0,200,255,0.5)', width:'100%', textAlign:'center',
               }}>
-                <div className="text-cyan-300 font-bold animate-pulse" style={{ fontSize:'10px', letterSpacing:'0.05em' }}>⚡ SP CHARGE！</div>
+                <div className="text-cyan-300 font-bold animate-pulse" style={{ fontSize: isLandscape ? '10px' : '8px', letterSpacing:'0.05em' }}>⚡ SP CHARGE！</div>
               </div>
             )}
             {/* P1カード - 下段 */}
@@ -1552,15 +1557,15 @@ export function BattleSim() {
               style={{
                 background:'rgba(20,10,0,0.95)',
                 border:'2px solid #FF8C00',
-                borderRadius:8, padding:'6px 8px', width:'100%',
+                borderRadius:8, padding:cardPad, width:'100%',
               }}>
               <div className="text-orange-400 font-bold text-xs mb-1">
                 P1{animData!.p1isSA ? ' ⚡SA' : ''}
               </div>
               {p1Card
                 ? <>
-                    <CardShape shape={p1Card.shape} specialPos={p1Card.specialPos} cellSize={4} p1Color="#FFE000" spColor="#FF4500" />
-                    <div className="text-white text-xs font-bold mt-1 text-center" style={{ maxWidth:84, wordBreak:'break-all' }}>{p1Card.name}</div>
+                    <CardShape shape={p1Card.shape} specialPos={p1Card.specialPos} cellSize={cardCellSize} p1Color="#FFE000" spColor="#FF4500" />
+                    <div className="text-white font-bold mt-1 text-center" style={{ fontSize: isLandscape ? '12px' : '9px', maxWidth:nameMaxW, wordBreak:'break-all' }}>{p1Card.name}</div>
                   </>
                 : <div className="text-gray-400 text-xs">パス</div>
               }
