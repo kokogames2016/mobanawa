@@ -83,6 +83,110 @@ function simulateGrid(
   return newGrid;
 }
 
+// ─── 危険地帯（侵入可能ギャップ）検出 ───────────────────────────────────────
+
+export interface DangerInfo {
+  cells: Set<string>;              // 危険地帯の全空きマス "r,c"
+  regions: Array<Set<string>>;    // 危険地帯の連結領域ごとのセット
+}
+
+/**
+ * P2陣地に隣接する空きマス連結領域のうち、
+ * いずれかのカード（全回転）が完全に収まる領域を「危険地帯」として返す。
+ * P2陣地から縦横8マス（チェビシェフ距離8）以内のみを対象にする。
+ */
+export function computeDangerZones(grid: CellState[][], allCards: Card[]): DangerInfo {
+  const empty: DangerInfo = { cells: new Set(), regions: [] };
+  if (allCards.length === 0) return empty;
+
+  const rows = grid.length, cols = grid[0]?.length ?? 0;
+
+  // P2陣地から8マス以内の空きマスをフィルタリング
+  const RANGE = 8;
+  const inRange = new Set<string>();
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      if (grid[r][c] !== 'p2' && grid[r][c] !== 'p2_sp') continue;
+      for (let dr = -RANGE; dr <= RANGE; dr++) {
+        for (let dc = -RANGE; dc <= RANGE; dc++) {
+          const nr = r+dr, nc = c+dc;
+          if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && grid[nr][nc] === 'E') {
+            inRange.add(`${nr},${nc}`);
+          }
+        }
+      }
+    }
+  }
+  if (inRange.size === 0) return empty;
+
+  // 連結領域ごとにBFSし、P2隣接かつカードが収まる領域を危険地帯とする
+  const visited = new Set<string>();
+  const resultCells = new Set<string>();
+  const resultRegions: Array<Set<string>> = [];
+
+  for (const key of inRange) {
+    if (visited.has(key)) continue;
+    const [startR, startC] = key.split(',').map(Number);
+    const region: [number, number][] = [];
+    const localVis = new Set<string>([key]);
+    const q: [number, number][] = [[startR, startC]];
+    let adjToP2 = false;
+
+    for (let qi = 0; qi < q.length; qi++) {
+      const [r, c] = q[qi];
+      region.push([r, c]);
+      visited.add(`${r},${c}`);
+      for (const [dr, dc] of [[-1,0],[1,0],[0,-1],[0,1]] as const) {
+        const nr = r+dr, nc = c+dc;
+        if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) continue;
+        const cell = grid[nr][nc];
+        if (cell === 'p2' || cell === 'p2_sp') { adjToP2 = true; continue; }
+        if (cell === 'E' && !localVis.has(`${nr},${nc}`)) {
+          localVis.add(`${nr},${nc}`); q.push([nr, nc]);
+        }
+      }
+    }
+
+    if (!adjToP2 || region.length === 0) continue;
+
+    // 任意のカード形状がこの領域に完全に収まるか判定
+    const regionSet = new Set(region.map(([r, c]) => `${r},${c}`));
+    const minR = region.reduce((m, [r]) => Math.min(m, r), Infinity);
+    const maxR = region.reduce((m, [r]) => Math.max(m, r), -Infinity);
+    const minC = region.reduce((m, [, c]) => Math.min(m, c), Infinity);
+    const maxC = region.reduce((m, [, c]) => Math.max(m, c), -Infinity);
+
+    let isDanger = false;
+    outerCard: for (const card of allCards) {
+      if (!card.shape) continue;
+      for (const rot of [0, 90, 180, 270] as const) {
+        const shape = rotateShape(card.shape, rot);
+        const h = shape.length, w = shape[0]?.length ?? 0;
+        for (let py = minR - h + 1; py <= maxR; py++) {
+          for (let px = minC - w + 1; px <= maxC; px++) {
+            let fits = true;
+            outer2: for (let r = 0; r < h; r++) {
+              for (let c = 0; c < (shape[r]?.length ?? 0); c++) {
+                if (!shape[r][c]) continue;
+                if (!regionSet.has(`${py+r},${px+c}`)) { fits = false; break outer2; }
+              }
+            }
+            if (fits) { isDanger = true; break outerCard; }
+          }
+        }
+      }
+    }
+
+    if (isDanger) {
+      const regionSetCopy = new Set(regionSet);
+      for (const k of regionSet) resultCells.add(k);
+      resultRegions.push(regionSetCopy);
+    }
+  }
+
+  return { cells: resultCells, regions: resultRegions };
+}
+
 // ─── 壁判定（BFS） ──────────────────────────────────────────────────────────
 
 function isWallCell(c: CellState): boolean {
@@ -320,6 +424,43 @@ function scoreSpFirePotential(
   return score;
 }
 
+/**
+ * 配置後のP2陣地から一定範囲内の空きマス数（配置の柔軟性プロキシ）
+ * 多いほど次ターンの選択肢が多い
+ */
+function scoreAdjacentFlexibility(newGrid: CellState[][]): number {
+  const rows = newGrid.length, cols = newGrid[0]?.length ?? 0;
+  const reachable = new Set<string>();
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      if (newGrid[r][c] !== 'p2' && newGrid[r][c] !== 'p2_sp') continue;
+      for (let dr = -4; dr <= 4; dr++) {
+        for (let dc = -4; dc <= 4; dc++) {
+          const nr = r + dr, nc = c + dc;
+          if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && newGrid[nr][nc] === 'E')
+            reachable.add(`${nr},${nc}`);
+        }
+      }
+    }
+  }
+  return reachable.size;
+}
+
+/** Lv2ターン1〜4：中央ライン寄りの配置にボーナス（壁シード評価） */
+function scoreCenterBias(grid: CellState[][], newGrid: CellState[][], si: StageInfo): number {
+  const rows = newGrid.length, cols = newGrid[0]?.length ?? 0;
+  const midRow = (si.p1StartRow + si.p2StartRow) / 2;
+  let bonus = 0;
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    const was = grid[r][c], now = newGrid[r][c];
+    if ((now === 'p2' || now === 'p2_sp') && (was !== 'p2' && was !== 'p2_sp')) {
+      const dist = Math.abs(r - midRow);
+      bonus += Math.max(0, 5 - dist);
+    }
+  }
+  return bonus;
+}
+
 /** 序盤（T1-4）に自分のSPマスを敵陣側に置くペナルティ */
 function scoreSPExposurePenalty(
   grid: CellState[][], newGrid: CellState[][],
@@ -350,7 +491,8 @@ function scoreNormalMove(
   level: CpuLevel, remainingTurns: number,
   si: StageInfo | undefined,
   remainingHand?: string[],
-  cardMap?: Map<string, Card>
+  cardMap?: Map<string, Card>,
+  dangerInfo?: DangerInfo
 ): number {
   const newGrid = simulateGrid(grid, card, x, y, rotation, 'p2');
   const rows = newGrid.length, cols = newGrid[0]?.length ?? 0;
@@ -398,6 +540,29 @@ function scoreNormalMove(
   const currentTurn = maxTurns - remainingTurns;
   const isEarly = currentTurn <= 4;
   const isMid   = currentTurn > 4 && currentTurn <= 8;
+
+  // ── 危険地帯カバーボーナス ─────────────────────────────────────────────────
+  let dangerCellsCovered = 0;
+  let dangerRegionEliminated = false;
+  if (dangerInfo && dangerInfo.cells.size > 0) {
+    const newP2InDanger = new Set<string>();
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+      const was = grid[r]?.[c], now = newGrid[r]?.[c];
+      if ((now === 'p2' || now === 'p2_sp') && (was !== 'p2' && was !== 'p2_sp')) {
+        const k = `${r},${c}`;
+        if (dangerInfo.cells.has(k)) { dangerCellsCovered++; newP2InDanger.add(k); }
+      }
+    }
+    // この配置1枚で危険地帯の連結領域が全て塞がれるか
+    for (const region of dangerInfo.regions) {
+      if ([...region].every(k => newP2InDanger.has(k))) { dangerRegionEliminated = true; break; }
+    }
+  }
+  // レベル別危険地帯ボーナス（Lv2は強化：壁形成の核となるため高めに設定）
+  const dangerCoverBase = level === 2 ? 45 : level === 3 ? 15 : level === 1 ? 2 : 0;
+  const dangerCoverBonus = dangerCellsCovered > 0
+    ? dangerCellsCovered * dangerCoverBase + (dangerRegionEliminated ? dangerCoverBase * 3 : 0)
+    : 0;
 
   // ── SP発火評価 ─────────────────────────────────────────────────────────────
   const newlyFiredSP = countNewlyFiredSP(grid, newGrid);
@@ -474,47 +639,52 @@ function scoreNormalMove(
       const attack = (adjToP1 * 4 + (si ? frontierMax * 6 : 0) + p1AdjSP * 3) * aggrFactor;
       const fill   = isMid ? newCells * 1.0 : 0;
       return attack + fill + p2Space * 1 + continuity * 0.3 + wallBonusVal * 0.5
-        + simultaneousFireBonus * 0.5 + nearFireScore * 0.3
+        + simultaneousFireBonus * 0.5 + nearFireScore * 0.3 + dangerCoverBonus
         + turn1FrontierBonus + turn2Bonus;
     }
 
     // ── Lv2：コントロール ─────────────────────────────────────────────────────
     case 2: {
+      const flexScore = scoreAdjacentFlexibility(newGrid);
       if (isTurn1) {
-        // ターン1：自陣展開＋SP露出回避
-        const def = si ? p2HalfCells * 2 + wallDensity * 1 : continuity * 1;
-        return newCells * 2 + def + p2Space * 1 + turn1FrontierBonus * 0.4
-          - spExposurePenalty;
+        // ターン1：中央ライン寄りの壁シード位置を優先、SP露出回避
+        const centerBias = si ? scoreCenterBias(grid, newGrid, si) : 0;
+        const def = si ? p2HalfCells * 3 + wallDensity * 2 : continuity * 2;
+        return newCells * 2 + def + p2Space * 1 + centerBias * 2.5
+          + dangerCoverBonus + flexScore * 0.3 - spExposurePenalty;
       } else if (isTurn2) {
-        // ターン2：防衛か継続かを切り替え
+        // ターン2：防衛か壁形成かを切り替え
         if (turn2DefenseMode) {
           const def = si ? p2HalfCells * 3 + wallDensity * 2 : continuity * 2;
           return simultaneousFireBonus * 1.2 + nearFireScore * 0.8
             + surrounded * 8 + newSP * 4 + def + p2Space * 1
-            + turn2Bonus + wallBonusVal - spExposurePenalty;
+            + dangerCoverBonus + turn2Bonus + wallBonusVal + flexScore * 0.3 - spExposurePenalty;
         } else {
-          const def = si ? p2HalfCells * 2 + wallDensity * 1 : continuity * 1;
+          // 非防衛：攻撃継続ではなく壁形成を優先
+          const centerBias = si ? scoreCenterBias(grid, newGrid, si) : 0;
+          const def = si ? p2HalfCells * 3 + wallDensity * 3 : continuity * 3;
           return simultaneousFireBonus * 1.2 + nearFireScore * 0.8
-            + surrounded * 8 + newSP * 4 + def + p2Space * 1
-            + turn2Bonus - spExposurePenalty;
+            + surrounded * 8 + newSP * 4 + def + p2Space * 1 + centerBias * 2.0
+            + dangerCoverBonus + wallBonusVal + flexScore * 0.3 - spExposurePenalty;
         }
       } else if (isEarly) {
-        // 序盤：壁形成＋SP発火準備＋露出回避
+        // 序盤（T3-4）：壁形成＋危険地帯封鎖＋SP発火準備＋露出回避
         const def = si ? p2HalfCells * 3 + wallDensity * 2 : continuity * 2;
         const risk = si ? frontierMax * -6 : 0;
         return simultaneousFireBonus * 1.5 + nearFireScore * 1.2
           + surrounded * 8 + newSP * 4 + def + p2Space * 1
-          + risk + wallBonusVal - spExposurePenalty;
+          + dangerCoverBonus + risk + wallBonusVal + flexScore * 0.3 - spExposurePenalty;
       } else if (isMid) {
-        // 中盤：発火最優先
+        // 中盤：発火最優先＋危険地帯封鎖
         const fillEfficiency = newCells * 2.5 + p2HalfCells * 2 + wallDensity * 1.5;
         return simultaneousFireBonus * 2.0 + nearFireScore * 1.5
           + surrounded * 10 + newSP * 5 + fillEfficiency + p2Space * 1
-          + wallBonusVal + innerWallVal;
+          + dangerCoverBonus + wallBonusVal + innerWallVal + flexScore * 0.2;
       } else {
         // 終盤：発火＋占領
         return simultaneousFireBonus * 2.0 + nearFireScore * 1.0
-          + surrounded * 12 + newSP * 6 + newCells * 1.0 + p2Space * 1;
+          + surrounded * 12 + newSP * 6 + newCells * 1.0 + p2Space * 1
+          + dangerCoverBonus;
       }
     }
 
@@ -526,7 +696,7 @@ function scoreNormalMove(
       const fillB = isMid ? (newCells * 1.5 + wallDensity * 1.0) : 0;
       const aw = p1Total > p2Total ? 0.65 : p2Total > p1Total ? 0.35 : 0.5;
       return (aw * agg + (1-aw) * ctl) * 2 + p2Space * 2 - p1Opps * 0.3 + fillB + wallBonusVal
-        + simultaneousFireBonus * 1.2 + nearFireScore * 0.8
+        + simultaneousFireBonus * 1.2 + nearFireScore * 0.8 + dangerCoverBonus
         + turn1FrontierBonus * 0.7 + turn2Bonus * 0.8 - spExposurePenalty * 0.5;
     }
 
@@ -609,12 +779,18 @@ export function computeCpuMove(
   level: CpuLevel,
   availableSP: number,
   remainingTurns: number,
-  stageInfo?: StageInfo
+  stageInfo?: StageInfo,
+  allCards?: Card[]
 ): CpuMove | 'pass' {
   const maxTurns    = 12;
   const currentTurn = maxTurns - remainingTurns;
   const isLate      = currentTurn > 8;
   const isFinalTurn = currentTurn === 12;
+
+  // 危険地帯を事前に一度だけ計算（Lv1〜3のみ、Lv4は対象外）
+  const dangerInfo: DangerInfo | undefined = (level <= 3 && allCards && allCards.length > 0)
+    ? computeDangerZones(grid, allCards)
+    : undefined;
   // 終盤（T9-12）は全レベルでSA積極検討
   // Lv2はT5以降からSA検討開始（計画的SA）
   // 最終ターンは全レベルで必ずSA検討
@@ -633,7 +809,7 @@ export function computeCpuMove(
     // このカードを使った後の残り手札（SP発火ポテンシャル評価用）
     const remainingHand = hand.filter(id => id !== cardId);
     for (const { x, y, rotation } of getAllValidPlacements(grid, card, 'p2', false)) {
-      let s = scoreNormalMove(grid, card, x, y, rotation, level, remainingTurns, stageInfo, remainingHand, cardMap);
+      let s = scoreNormalMove(grid, card, x, y, rotation, level, remainingTurns, stageInfo, remainingHand, cardMap, dangerInfo);
       // SWカードは通常配置を抑制してSAに誘導（SA選択肢がある場合のみ意味を持つ）
       if (isSWCard && considerSA && card.spp > 0 && availableSP >= card.spp) s -= 6;
       if (s > bestNormalScore || (s === bestNormalScore && Math.random() < 0.15)) {

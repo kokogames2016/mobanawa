@@ -39,6 +39,24 @@ interface PendingPlacement {
   isValid: boolean;  // canPlace()の結果。falseでも仮置きは表示する
 }
 
+type AnimPhase = 'idle' | 'reveal' | 'p1-place' | 'resolve' | 'sp-fire' | 'score' | 'draw';
+interface AnimData {
+  p1CardId: string | null; p1isSA: boolean;
+  p2CardId: string | null; p2isSA: boolean;
+  p1OnlyGrid: CellState[][] | null; // P1だけ配置した中間グリッド
+  p2OnlyGrid: CellState[][] | null; // P2だけ配置した中間グリッド
+  p1GoesFirst: boolean;             // true=P1先表示（P1マス数≥P2）, false=P2先表示
+  finalGrid: CellState[][];
+  hasConflict: boolean;
+  prevCounts: { p1: number; p2: number };
+  finalCounts: { p1: number; p2: number };
+  finalP2Hand: string[];
+  finalP2Pile: string[];
+  p2Drew: boolean;
+  turnSnapshot: number;
+  newlyFiredCount: number; // このターンで新たに発火したSPマス数
+}
+
 // ─── 2段階デッキ選択（BoardSimと同じUI） ─────────────────────────────────────
 function getShapeBoundsSimple(shape: boolean[][]) {
   let minR = Infinity, maxR = -Infinity, minC = Infinity, maxC = -Infinity;
@@ -131,6 +149,14 @@ export function BattleSim() {
   // ゲーム終了後の遅延遷移
   const [gameEndPending, setGameEndPending] = useState(false);
 
+  // ── 配置演出 ──────────────────────────────────────────────────────────────
+  const [animEnabled, setAnimEnabled] = useState(true);
+  const [animPhase, setAnimPhase] = useState<AnimPhase>('idle');
+  const [animData, setAnimData] = useState<AnimData | null>(null);
+  const [animDisplayGrid, setAnimDisplayGrid] = useState<CellState[][] | null>(null);
+  const [animScore, setAnimScore] = useState({ p1: 0, p2: 0 });
+  const [animSpFlash, setAnimSpFlash] = useState(false);
+
   // ── 派生値 ────────────────────────────────────────────────────────────────
   const cardMap = useMemo(() => new Map(cards.map(c => [c.id, c])), [cards]);
   const stage = useMemo(() => STAGES.find(s => s.id === stageId) ?? STAGES[0], [stageId]);
@@ -179,11 +205,11 @@ export function BattleSim() {
       .sort((a, b) => (cardOrderMap.get(a.id) ?? 0) - (cardOrderMap.get(b.id) ?? 0));
   }, [p2FullDeck, p2DrawnCount, cardOrderMap]);
 
-  // 活性化済みSPマス（フレームオーバーレイ用）
-  const activatedSPPos = useMemo(() =>
-    screen === 'battle' ? getActivatedSPPositions(grid) : null,
-    [grid, screen]
-  );
+  // 活性化済みSPマス（フレームオーバーレイ用）: アニメーション中はdisplayGridを使用
+  const activatedSPPos = useMemo(() => {
+    if (screen !== 'battle') return null;
+    return getActivatedSPPositions(animDisplayGrid ?? grid);
+  }, [grid, animDisplayGrid, screen]);
 
   // 手札の配置可能性（通常・SA）
   const p1HandPlaceability = useMemo(() => {
@@ -287,6 +313,7 @@ export function BattleSim() {
     setP1DrawnCount(HAND_SIZE);
     setP2DrawnCount(HAND_SIZE);
     setGameEndPending(false);
+    setAnimPhase('idle'); setAnimData(null); setAnimDisplayGrid(null); setAnimSpFlash(false);
     clearBattleState();
     setScreen('battle');
   }
@@ -372,6 +399,38 @@ export function BattleSim() {
     if (newP2 > 0) setP2SPAccum(prev => prev + newP2);
   }
 
+  // ── アニメーション結果の即時適用（演出オフ時または演出完了時） ────────────
+  function applyAnimResult(data: AnimData) {
+    applyNewSP(data.finalGrid);
+    setGrid(data.finalGrid);
+    setP2Hand(data.finalP2Hand);
+    setP2Pile(data.finalP2Pile);
+    if (data.p2Drew) setP2DrawnCount(c => c + 1);
+    setCpuThinking(false);
+    advanceTurn(data.finalGrid);
+  }
+
+  // 配置の衝突（P1とP2のセルが重なる）を検出
+  function detectConflict(
+    p1Act: typeof p1Action,
+    cpuMove: { cardId: string; x: number; y: number; rotation: Rotation } | 'pass'
+  ): boolean {
+    if (p1Act === 'pass' || p1Act === null || cpuMove === 'pass') return false;
+    const c1 = cardMap.get(p1Act.cardId);
+    const c2 = cardMap.get(cpuMove.cardId);
+    if (!c1?.shape || !c2?.shape) return false;
+    const s1 = rotateShape(c1.shape, p1Act.rotation);
+    const s2 = rotateShape(c2.shape, cpuMove.rotation);
+    const p1Cells = new Set<string>();
+    for (let r = 0; r < s1.length; r++)
+      for (let c = 0; c < (s1[r]?.length ?? 0); c++)
+        if (s1[r][c]) p1Cells.add(`${p1Act.y+r},${p1Act.x+c}`);
+    for (let r = 0; r < s2.length; r++)
+      for (let c = 0; c < (s2[r]?.length ?? 0); c++)
+        if (s2[r][c] && p1Cells.has(`${cpuMove.y+r},${cpuMove.x+c}`)) return true;
+    return false;
+  }
+
   // ── カードを引く（使用後に補充） ──────────────────────────────────────────
   function drawCard(
     usedCardId: string,
@@ -433,11 +492,11 @@ export function BattleSim() {
   }
 
   function handleP2Pass() {
-    if (waitFor !== 'p2' || cpuMode) return;
+    if (waitFor !== 'p2' || cpuMode || animPhase !== 'idle') return;
     if (p2Hand.length > 0) {
       setTrashMode('p2');
     } else {
-      // カードなし：直接パス
+      // カードなし：直接パス（演出適用）
       setP2SPAccum(prev => prev + 1);
       let newGrid = grid;
       if (p1Action !== 'pass' && p1Action !== null) {
@@ -447,10 +506,8 @@ export function BattleSim() {
             card.specialPos, p1Action.rotation, p1Action.isSA);
         }
       }
-      applyNewSP(newGrid);
-      setGrid(newGrid);
       setP2Sel(null); setPending(null); setP2SAMode(false);
-      advanceTurn(newGrid);
+      fireManualAnimation('pass', newGrid, p2Hand, p2Pile, false);
     }
   }
 
@@ -475,17 +532,15 @@ export function BattleSim() {
       setP1Sel(null); setPending(null); setP1SAMode(false);
       setWaitFor('p2');
     } else {
-      // トラッシュ後、同スロットに山札から1枚補充
+      // P2トラッシュパス：手札・山札更新はanimResult適用時まで遅延
       const trashIdx2 = trashCardId ? p2Hand.indexOf(trashCardId) : -1;
       const afterTrash2 = [...p2Hand];
       let newP2Pile = p2Pile;
+      let p2Drew2 = false;
       if (trashIdx2 !== -1) {
-        if (p2Pile.length > 0) { afterTrash2[trashIdx2] = p2Pile[0]; newP2Pile = p2Pile.slice(1); setP2DrawnCount(c => c + 1); }
+        if (p2Pile.length > 0) { afterTrash2[trashIdx2] = p2Pile[0]; newP2Pile = p2Pile.slice(1); p2Drew2 = true; }
         else afterTrash2.splice(trashIdx2, 1);
       }
-      const newP2Hand = afterTrash2;
-      setP2Hand(newP2Hand);
-      setP2Pile(newP2Pile);
       setP2SPAccum(prev => prev + 1);
       let newGrid = grid;
       if (p1Action !== 'pass' && p1Action !== null) {
@@ -495,10 +550,8 @@ export function BattleSim() {
             card.specialPos, p1Action.rotation, p1Action.isSA);
         }
       }
-      applyNewSP(newGrid);
-      setGrid(newGrid);
       setP2Sel(null); setPending(null); setP2SAMode(false);
-      advanceTurn(newGrid);
+      fireManualAnimation('pass', newGrid, afterTrash2, newP2Pile, p2Drew2);
     }
   }
 
@@ -507,13 +560,14 @@ export function BattleSim() {
     if (waitFor !== 'p2' || !cpuMode || p1Action === null) return;
     setCpuThinking(true);
     const timer = setTimeout(() => {
-      const move = computeCpuMove(grid, p2Hand, cardMap, cpuLevel, availP2SP, MAX_TURNS - turn, stageInfo);
+      const move = computeCpuMove(grid, p2Hand, cardMap, cpuLevel, availP2SP, MAX_TURNS - turn, stageInfo, cards);
       let newGrid = grid;
+      let p2CardId: string | null = null;
+      let p2isSA = false;
 
       if (move !== 'pass') {
         const card = cardMap.get(move.cardId);
         if (card?.shape) {
-          // resolveSimultaneous は shape/specialPos を内部で取得するので元のshapeを渡す
           newGrid = resolveSimultaneous(
             grid,
             p1Action !== 'pass'
@@ -525,14 +579,14 @@ export function BattleSim() {
             (id) => cardMap.get(id)?.size ?? 0
           );
           if (move.isSA) { setP2SPSpent(s => s + card.spp); setP2SACount(n => n + 1); }
-          // SP加算はapplyNewSPで行う
           setP2Placed(prev => [...prev, { cardId: move.cardId, isSA: move.isSA }]);
           showCpuMsg(move.isSA
             ? `⚡ CPUがSAを使用しました！「${move.cardName}」`
             : `CPU が「${move.cardName}」を配置しました`);
+          p2CardId = move.cardId;
+          p2isSA = move.isSA;
         }
       } else {
-        // CPUパス：P1のカードを配置してから処理
         if (p1Action !== 'pass') {
           const card = cardMap.get(p1Action.cardId);
           if (card?.shape) {
@@ -547,71 +601,212 @@ export function BattleSim() {
           : 'CPU がパスしました');
       }
 
-      // CPU配置 or パスに応じて手札・山札を更新
-      // ★パス時は stale closure の p2Hand を直接使わず同期的に計算する
       let finalP2Hand: string[];
       let finalP2Pile: string[];
       let p2Drew = false;
       if (move !== 'pass') {
         const { newHand, newPile } = drawCard(move.cardId, p2Hand, p2Pile);
-        finalP2Hand = newHand;
-        finalP2Pile = newPile;
+        finalP2Hand = newHand; finalP2Pile = newPile;
         p2Drew = p2Pile.length > 0;
       } else {
-        // トラッシュ後、山札から1枚ドロー（手札4枚を維持）
         const trashId = pickCardToTrash(p2Hand, cardMap);
         const afterTrash = trashId ? p2Hand.filter(id => id !== trashId) : [...p2Hand];
         if (afterTrash.length < HAND_SIZE && p2Pile.length > 0) {
-          finalP2Hand = [...afterTrash, p2Pile[0]];
-          finalP2Pile = p2Pile.slice(1);
-          p2Drew = true;
-        } else {
-          finalP2Hand = afterTrash;
-          finalP2Pile = p2Pile;
-        }
+          finalP2Hand = [...afterTrash, p2Pile[0]]; finalP2Pile = p2Pile.slice(1); p2Drew = true;
+        } else { finalP2Hand = afterTrash; finalP2Pile = p2Pile; }
       }
 
-      applyNewSP(newGrid);
-      setGrid(newGrid);
-      setP2Hand(finalP2Hand);
-      setP2Pile(finalP2Pile);
-      if (p2Drew) setP2DrawnCount(c => c + 1);
-      setCpuThinking(false);
-      advanceTurn(newGrid);
+      // 衝突時の段差表示用グリッド（P1・P2それぞれ単独配置）
+      let p1OnlyGrid: CellState[][] | null = null;
+      if (p1Action !== 'pass' && p1Action !== null) {
+        const card = cardMap.get(p1Action.cardId);
+        if (card?.shape) {
+          p1OnlyGrid = placeCard(grid, card.shape, p1Action.x, p1Action.y, 'p1',
+            card.specialPos, p1Action.rotation, p1Action.isSA);
+        }
+      }
+      let p2OnlyGrid: CellState[][] | null = null;
+      if (move !== 'pass') {
+        const card = cardMap.get(move.cardId);
+        if (card?.shape) {
+          p2OnlyGrid = placeCard(grid, card.shape, move.x, move.y, 'p2',
+            card.specialPos, move.rotation, move.isSA);
+        }
+      }
+      // マス数が多いカードを先に表示（塗り替えられる側→塗り返す側の順）
+      const p1CardSize = (p1Action !== 'pass' && p1Action !== null)
+        ? (cardMap.get(p1Action.cardId)?.size ?? 0) : 0;
+      const p2CardSize = move !== 'pass' ? (cardMap.get(move.cardId)?.size ?? 0) : 0;
+      const p1GoesFirst = p1CardSize >= p2CardSize;
+
+      const prevCounts = countCells(grid);
+      const finalCounts = countCells(newGrid);
+      const hasConflict = detectConflict(p1Action, move);
+
+      // 新規発火SPマス数（sp-fireフェーズの表示判定用）
+      const prevActivated = getActivatedSPPositions(grid);
+      const newActivated  = getActivatedSPPositions(newGrid);
+      const prevFiredSet  = new Set(prevActivated.p1.concat(prevActivated.p2).map(([r,c]) => `${r},${c}`));
+      const newlyFiredCount = newActivated.p1.concat(newActivated.p2)
+        .filter(([r,c]) => !prevFiredSet.has(`${r},${c}`)).length;
+
+      const data: AnimData = {
+        p1CardId: p1Action !== 'pass' && p1Action !== null ? p1Action.cardId : null,
+        p1isSA: p1Action !== 'pass' && p1Action !== null ? p1Action.isSA : false,
+        p2CardId, p2isSA, p1OnlyGrid, p2OnlyGrid, p1GoesFirst, finalGrid: newGrid,
+        hasConflict, prevCounts, finalCounts,
+        finalP2Hand, finalP2Pile, p2Drew, turnSnapshot: turn, newlyFiredCount,
+      };
+
+      if (animEnabled) {
+        setAnimDisplayGrid(grid.map(r => [...r]));
+        setAnimScore(prevCounts);
+        setAnimData(data);
+        setAnimPhase('reveal');
+        // setCpuThinking は演出終了後にapplyAnimResultで解除
+      } else {
+        applyAnimResult(data);
+      }
     }, CPU_DELAY);
     return () => clearTimeout(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [waitFor, cpuMode]);
 
+  // ── アニメーションフェーズ進行 ───────────────────────────────────────────
+  useEffect(() => {
+    if (animPhase === 'idle' || !animData) return;
+    let t: ReturnType<typeof setTimeout>;
+    if (animPhase === 'reveal') {
+      t = setTimeout(() => {
+        const firstOnlyGrid = animData.p1GoesFirst ? animData.p1OnlyGrid : animData.p2OnlyGrid;
+        if (animData.hasConflict && firstOnlyGrid) {
+          setAnimDisplayGrid(firstOnlyGrid);
+          setAnimPhase('p1-place');
+        } else {
+          setAnimDisplayGrid(animData.finalGrid);
+          setAnimPhase('resolve');
+        }
+      }, 1300);
+    } else if (animPhase === 'p1-place') {
+      t = setTimeout(() => {
+        setAnimDisplayGrid(animData.finalGrid);
+        setAnimPhase('resolve');
+      }, 900);
+    } else if (animPhase === 'resolve') {
+      t = setTimeout(() => {
+        if (animData.newlyFiredCount > 0) {
+          setAnimSpFlash(true);
+          setAnimPhase('sp-fire');
+        } else {
+          // 新規発火なし → sp-fireをスキップしてscoreへ
+          setAnimScore(animData.finalCounts);
+          setAnimPhase('score');
+        }
+      }, 800);
+    } else if (animPhase === 'sp-fire') {
+      t = setTimeout(() => {
+        setAnimSpFlash(false);
+        setAnimScore(animData.finalCounts);
+        setAnimPhase('score');
+      }, 1100);
+    } else if (animPhase === 'score') {
+      t = setTimeout(() => {
+        setAnimPhase('draw');
+      }, 1000);
+    } else if (animPhase === 'draw') {
+      applyAnimResult(animData);
+      t = setTimeout(() => {
+        setAnimPhase('idle');
+        setAnimData(null);
+        setAnimDisplayGrid(null);
+        setAnimSpFlash(false);
+      }, 700);
+    }
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [animPhase]);
+
   // P2手動 確定
   function confirmP2Action() {
-    if (waitFor !== 'p2' || cpuMode || !pending || !pending.isValid) return;
+    if (waitFor !== 'p2' || cpuMode || !pending || !pending.isValid || animPhase !== 'idle') return;
     const move = { cardId: pending.cardId, x: pending.x, y: pending.y, rotation: pending.rotation, isSA: pending.isSA };
     const card = cardMap.get(pending.cardId);
     if (pending.isSA && card) {
       setP2SPSpent(s => s + card.spp);
       setP2SACount(n => n + 1);
     }
-    // SP加算はapplyNewSPで行う
     setP2Placed(prev => [...prev, { cardId: pending.cardId, isSA: pending.isSA }]);
-    const { newHand, newPile } = drawCard(pending.cardId, p2Hand, p2Pile);
-    setP2Hand(newHand); setP2Pile(newPile);
-    if (p2Pile.length > 0) setP2DrawnCount(c => c + 1);
+
+    // 手札・山札更新はanimResult適用時まで遅延
+    const { newHand: finalP2Hand, newPile: finalP2Pile } = drawCard(pending.cardId, p2Hand, p2Pile);
+    const p2Drew = p2Pile.length > 0;
 
     const newGrid = resolveSimultaneous(
       grid,
-      p1Action !== 'pass'
-        ? { cardId: p1Action!.cardId, x: (p1Action as any).x, y: (p1Action as any).y, rotation: (p1Action as any).rotation, isSpecialAttack: (p1Action as any).isSA }
+      p1Action !== 'pass' && p1Action !== null
+        ? { cardId: p1Action.cardId, x: p1Action.x, y: p1Action.y, rotation: p1Action.rotation, isSpecialAttack: p1Action.isSA }
         : 'pass',
       { cardId: move.cardId, x: move.x, y: move.y, rotation: move.rotation, isSpecialAttack: move.isSA },
       (id) => cardMap.get(id)?.shape ?? null,
       (id) => cardMap.get(id)?.specialPos ?? null,
       (id) => cardMap.get(id)?.size ?? 0
     );
-    applyNewSP(newGrid);
-    setGrid(newGrid);
+
     setP2Sel(null); setPending(null); setP2SAMode(false);
-    advanceTurn(newGrid);
+    fireManualAnimation(move, newGrid, finalP2Hand, finalP2Pile, p2Drew);
+  }
+
+  /** 手動モード用：AnimDataを構築してアニメーション発火（またはanim無効時は即時適用） */
+  function fireManualAnimation(
+    p2Move: { cardId: string; x: number; y: number; rotation: Rotation; isSA: boolean } | 'pass',
+    newGrid: CellState[][],
+    finalP2Hand: string[], finalP2Pile: string[], p2Drew: boolean
+  ) {
+    const p2CardId = p2Move !== 'pass' ? p2Move.cardId : null;
+    const p2isSA   = p2Move !== 'pass' ? p2Move.isSA : false;
+
+    let p1OnlyGrid: CellState[][] | null = null;
+    if (p1Action !== 'pass' && p1Action !== null) {
+      const c = cardMap.get(p1Action.cardId);
+      if (c?.shape) p1OnlyGrid = placeCard(grid, c.shape, p1Action.x, p1Action.y, 'p1',
+        c.specialPos, p1Action.rotation, p1Action.isSA);
+    }
+    let p2OnlyGrid: CellState[][] | null = null;
+    if (p2Move !== 'pass') {
+      const c = cardMap.get(p2Move.cardId);
+      if (c?.shape) p2OnlyGrid = placeCard(grid, c.shape, p2Move.x, p2Move.y, 'p2',
+        c.specialPos, p2Move.rotation, p2Move.isSA);
+    }
+    const p1CardSize = (p1Action !== 'pass' && p1Action !== null) ? (cardMap.get(p1Action.cardId)?.size ?? 0) : 0;
+    const p2CardSize = p2Move !== 'pass' ? (cardMap.get(p2Move.cardId)?.size ?? 0) : 0;
+    const p1GoesFirst = p1CardSize >= p2CardSize;
+
+    const prevCounts = countCells(grid);
+    const finalCounts = countCells(newGrid);
+    const hasConflict = detectConflict(p1Action, p2Move);
+
+    const prevActivated = getActivatedSPPositions(grid);
+    const newActivated  = getActivatedSPPositions(newGrid);
+    const prevFiredSet  = new Set(prevActivated.p1.concat(prevActivated.p2).map(([r,c]) => `${r},${c}`));
+    const newlyFiredCount = newActivated.p1.concat(newActivated.p2)
+      .filter(([r,c]) => !prevFiredSet.has(`${r},${c}`)).length;
+
+    const data: AnimData = {
+      p1CardId: p1Action !== 'pass' && p1Action !== null ? p1Action.cardId : null,
+      p1isSA: p1Action !== 'pass' && p1Action !== null ? p1Action.isSA : false,
+      p2CardId, p2isSA, p1OnlyGrid, p2OnlyGrid, p1GoesFirst, finalGrid: newGrid,
+      hasConflict, prevCounts, finalCounts,
+      finalP2Hand, finalP2Pile, p2Drew, turnSnapshot: turn, newlyFiredCount,
+    };
+
+    if (animEnabled) {
+      setAnimDisplayGrid(grid.map(r => [...r]));
+      setAnimScore(prevCounts);
+      setAnimData(data);
+      setAnimPhase('reveal');
+    } else {
+      applyAnimResult(data);
+    }
   }
 
   function advanceTurn(_currentGrid: CellState[][]) {
@@ -637,10 +832,11 @@ export function BattleSim() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // ベースグリッド
+    // ベースグリッド（アニメーション中はdisplayGridを使用）
+    const renderGrid = (animDisplayGrid && animDisplayGrid.length > 0) ? animDisplayGrid : grid;
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
-        const cell = grid[r]?.[c] ?? 'E';
+        const cell = renderGrid[r]?.[c] ?? 'E';
         ctx.fillStyle = CELL_COLOR[cell] ?? '#1a3a1a';
         ctx.fillRect(c*cellSize, r*cellSize, cellSize, cellSize);
         if (cell !== 'W') {
@@ -712,19 +908,19 @@ export function BattleSim() {
     // スタート位置マーカー
     if (stage.p1Start) {
       const [x,y] = stage.p1Start;
-      if (grid[y]?.[x] !== 'p1_sp') {
+      if (renderGrid[y]?.[x] !== 'p1_sp') {
         ctx.strokeStyle = '#FF8C00'; ctx.lineWidth = 2;
         ctx.strokeRect(x*cellSize+1, y*cellSize+1, cellSize-2, cellSize-2);
       }
     }
     if (stage.p2Start) {
       const [x,y] = stage.p2Start;
-      if (grid[y]?.[x] !== 'p2_sp') {
+      if (renderGrid[y]?.[x] !== 'p2_sp') {
         ctx.strokeStyle = '#00AAFF'; ctx.lineWidth = 2;
         ctx.strokeRect(x*cellSize+1, y*cellSize+1, cellSize-2, cellSize-2);
       }
     }
-  }, [grid, hover, pending, p1Sel, p2Sel, p1Rot, p2Rot, p1SAMode, p2SAMode,
+  }, [grid, animDisplayGrid, hover, pending, p1Sel, p2Sel, p1Rot, p2Rot, p1SAMode, p2SAMode,
       waitFor, cellSize, stage, screen, cardMap]);
 
   // ── 結果画面：最終盤面描画 ───────────────────────────────────────────────
@@ -802,7 +998,7 @@ export function BattleSim() {
     const isP1Turn = waitFor === 'p1';
     const isP2Turn = waitFor === 'p2' && !cpuMode;
     if (!isP1Turn && !isP2Turn) return;
-    if (cpuThinking) return;
+    if (cpuThinking || animPhase !== 'idle') return;
 
     const player   = isP1Turn ? 'p1' : 'p2';
     const selCard  = isP1Turn ? p1Sel : p2Sel;
@@ -914,7 +1110,7 @@ export function BattleSim() {
 
   // ── コントロールカラム ────────────────────────────────────────────────────
   function renderControls(isP1: boolean) {
-    const isActive = (isP1 && waitFor === 'p1') || (!isP1 && waitFor === 'p2' && !cpuMode);
+    const isActive = animPhase === 'idle' && ((isP1 && waitFor === 'p1') || (!isP1 && waitFor === 'p2' && !cpuMode));
     const hasPend     = !!pending && pending.player === (isP1 ? 'p1' : 'p2');
     const pendValid   = hasPend && (pending?.isValid ?? false);
     const selCard  = isP1 ? p1Sel : p2Sel;
@@ -1166,19 +1362,43 @@ export function BattleSim() {
       .bsim-fp2 { background:linear-gradient(to top,#001199,#0033CC,#0044FF,#0088FF,#00CCFF,#00FFFF,#00CCFF); background-size:100% 500%; box-shadow:0 0 5px #00CCFF; animation:bsim-flame-p2 1.4s ease-in-out infinite; }
       .bsim-fp1:nth-child(2n){animation-delay:0.2s} .bsim-fp1:nth-child(3n){animation-delay:0.4s} .bsim-fp1:nth-child(4n){animation-delay:0.6s}
       .bsim-fp2:nth-child(2n){animation-delay:0.2s} .bsim-fp2:nth-child(3n){animation-delay:0.4s} .bsim-fp2:nth-child(4n){animation-delay:0.6s}
+      @keyframes bsim-reveal-in { 0%{opacity:0;transform:scale(0.7)} 60%{opacity:1;transform:scale(1.05)} 100%{opacity:1;transform:scale(1)} }
+      @keyframes bsim-sp-flash { 0%{opacity:0} 30%{opacity:0.7} 80%{opacity:0.7} 100%{opacity:0} }
+      @keyframes bsim-score-pop { 0%{transform:scale(1)} 40%{transform:scale(1.3)} 100%{transform:scale(1)} }
+      @keyframes bsim-sa-wave-p1 {
+        0%  {box-shadow:0 0 0 0 rgba(255,140,0,0);border-color:#FF8C00}
+        20% {box-shadow:0 0 14px 5px rgba(255,200,0,0.95),0 0 28px 10px rgba(255,140,0,0.6);border-color:#FFE000}
+        45% {box-shadow:0 0 6px 2px rgba(255,140,0,0.5);border-color:#FF8C00}
+        65% {box-shadow:0 0 20px 7px rgba(255,160,0,0.9),0 0 36px 12px rgba(255,100,0,0.4);border-color:#FFAA00}
+        85% {box-shadow:0 0 10px 3px rgba(255,140,0,0.6);border-color:#FF8C00}
+        100%{box-shadow:0 0 4px 1px rgba(255,140,0,0.2);border-color:#FF8C00}
+      }
+      @keyframes bsim-sa-wave-p2 {
+        0%  {box-shadow:0 0 0 0 rgba(0,136,255,0);border-color:#0088FF}
+        20% {box-shadow:0 0 14px 5px rgba(0,200,255,0.95),0 0 28px 10px rgba(0,136,255,0.6);border-color:#00EEFF}
+        45% {box-shadow:0 0 6px 2px rgba(0,136,255,0.5);border-color:#0088FF}
+        65% {box-shadow:0 0 20px 7px rgba(0,160,255,0.9),0 0 36px 12px rgba(0,100,255,0.4);border-color:#00AAFF}
+        85% {box-shadow:0 0 10px 3px rgba(0,136,255,0.6);border-color:#0088FF}
+        100%{box-shadow:0 0 4px 1px rgba(0,136,255,0.2);border-color:#0088FF}
+      }
+      .bsim-reveal-card { animation:bsim-reveal-in 0.4s ease-out forwards; }
+      .bsim-sa-wave-p1 { animation:bsim-sa-wave-p1 1.3s ease-in-out forwards; }
+      .bsim-sa-wave-p2 { animation:bsim-sa-wave-p2 1.3s ease-in-out forwards; }
+      .bsim-sp-flash-overlay { animation:bsim-sp-flash 0.55s ease-out forwards; }
+      .bsim-score-pop { animation:bsim-score-pop 0.45s ease-out forwards; }
     `}</style>
       {/* ターン・スコア行 */}
       <div className="flex items-center gap-2 px-2 py-0.5">
         <span className="text-xs text-gray-400 font-mono">T{turn}/{MAX_TURNS}</span>
-        <span className="text-orange-400 text-xs font-bold">
-          P1:{p1Score}マス
-          {pendingCounts !== null && (
+        <span className={`text-orange-400 text-xs font-bold ${animPhase === 'score' ? 'bsim-score-pop' : ''}`}>
+          P1:{animPhase !== 'idle' ? animScore.p1 : p1Score}マス
+          {pendingCounts !== null && animPhase === 'idle' && (
             <span className="text-yellow-400 ml-0.5">→{pendingCounts.p1}</span>
           )}
         </span>
-        <span className="text-blue-400 text-xs font-bold">
-          {cpuMode ? 'CPU' : 'P2'}:{p2Score}マス
-          {pendingCounts !== null && (
+        <span className={`text-blue-400 text-xs font-bold ${animPhase === 'score' ? 'bsim-score-pop' : ''}`}>
+          {cpuMode ? 'CPU' : 'P2'}:{animPhase !== 'idle' ? animScore.p2 : p2Score}マス
+          {pendingCounts !== null && animPhase === 'idle' && (
             <span className="text-yellow-400 ml-0.5">→{pendingCounts.p2}</span>
           )}
         </span>
@@ -1187,6 +1407,11 @@ export function BattleSim() {
             ? <span className="text-blue-300 animate-pulse">CPU思考中...</span>
             : <span className="text-gray-500">{waitFor === 'p1' ? 'P1のターン' : cpuMode ? '' : 'P2のターン'}</span>
           }
+          <button
+            onClick={() => setAnimEnabled(e => !e)}
+            className={`px-2 py-0.5 rounded text-xs ${animEnabled ? 'bg-indigo-800 text-indigo-200' : 'bg-gray-700 text-gray-500'}`}
+            style={tap}
+          >{animEnabled ? '演出ON' : '演出OFF'}</button>
           <button
             onClick={() => setShowExitConfirm(true)}
             className="px-2 py-0.5 bg-gray-700 hover:bg-gray-600 active:bg-gray-500 text-gray-300 rounded text-xs"
@@ -1261,9 +1486,95 @@ export function BattleSim() {
     </div>
   );
 
+  // ── カード演出オーバーレイ（SPフラッシュのみ・テキストはサイドパネルへ） ──
+  const animOverlay = (animPhase !== 'idle' && animData) ? (() => {
+    const showSPFlash = animPhase === 'sp-fire';
+    return (
+      <div style={{ position:'fixed', inset:0, zIndex:40, pointerEvents:'none' }}>
+        {/* SP発火フラッシュ（背景のみ・テキストはカードパネル内） */}
+        {showSPFlash && animSpFlash && (
+          <div className="bsim-sp-flash-overlay"
+            style={{ position:'absolute', inset:0, background:'rgba(0,180,255,0.2)', zIndex:1 }} />
+        )}
+      </div>
+    );
+  })() : null;
+
+  // ── アニメーション中カードサイドパネル（常時96px確保・canvas位置を固定） ──
+  const animCardPanel = (() => {
+    const showContent = animPhase !== 'idle' && animData !== null;
+    // SA波エフェクトはrevealフェーズ中のみ発動
+    const saPhase = animPhase === 'reveal';
+    const showSPCharge = animPhase === 'sp-fire' && animSpFlash;
+    const p1Card = showContent && animData!.p1CardId ? cardMap.get(animData!.p1CardId) : null;
+    const p2Card = showContent && animData!.p2CardId ? cardMap.get(animData!.p2CardId) : null;
+    return (
+      <div style={{
+        display:'flex', flexDirection:'column', justifyContent:'space-around', alignItems:'center',
+        width:96, minWidth:96, flexShrink:0,
+        background: showContent ? 'rgba(10,10,20,0.92)' : 'transparent',
+        borderLeft: showContent ? '1px solid #333' : 'none',
+        padding: showContent ? '8px 4px' : '0', gap:8,
+      }}>
+        {showContent && (
+          <>
+            {/* P2（CPU）カード - 上段 */}
+            <div
+              className={`flex flex-col items-center${animData!.p2isSA && saPhase ? ' bsim-sa-wave-p2' : ''}`}
+              style={{
+                background:'rgba(0,10,30,0.95)',
+                border:`2px solid ${animData!.p2isSA ? '#FF4500' : '#0088FF'}`,
+                borderRadius:8, padding:'6px 8px', width:'100%',
+              }}>
+              <div className="text-blue-400 font-bold text-xs mb-1">
+                {cpuMode ? 'CPU' : 'P2'}{animData!.p2isSA ? ' ⚡SA' : ''}
+              </div>
+              {p2Card
+                ? <>
+                    <CardShape shape={p2Card.shape} specialPos={p2Card.specialPos} cellSize={4} p1Color="#0044FF" spColor="#00CCFF" />
+                    <div className="text-white text-xs font-bold mt-1 text-center" style={{ maxWidth:84, wordBreak:'break-all' }}>{p2Card.name}</div>
+                  </>
+                : <div className="text-gray-400 text-xs">パス</div>
+              }
+            </div>
+            {/* SP CHARGE テキスト（sp-fireフェーズのみ・カードパネル内に表示） */}
+            {showSPCharge && (
+              <div style={{
+                background:'rgba(0,30,60,0.95)', borderRadius:6, padding:'5px 6px',
+                border:'1px solid rgba(0,200,255,0.5)', width:'100%', textAlign:'center',
+              }}>
+                <div className="text-cyan-300 font-bold animate-pulse" style={{ fontSize:'10px', letterSpacing:'0.05em' }}>⚡ SP CHARGE！</div>
+              </div>
+            )}
+            {/* P1カード - 下段 */}
+            <div
+              className={`flex flex-col items-center${animData!.p1isSA && saPhase ? ' bsim-sa-wave-p1' : ''}`}
+              style={{
+                background:'rgba(20,10,0,0.95)',
+                border:'2px solid #FF8C00',
+                borderRadius:8, padding:'6px 8px', width:'100%',
+              }}>
+              <div className="text-orange-400 font-bold text-xs mb-1">
+                P1{animData!.p1isSA ? ' ⚡SA' : ''}
+              </div>
+              {p1Card
+                ? <>
+                    <CardShape shape={p1Card.shape} specialPos={p1Card.specialPos} cellSize={4} p1Color="#FFE000" spColor="#FF4500" />
+                    <div className="text-white text-xs font-bold mt-1 text-center" style={{ maxWidth:84, wordBreak:'break-all' }}>{p1Card.name}</div>
+                  </>
+                : <div className="text-gray-400 text-xs">パス</div>
+              }
+            </div>
+          </>
+        )}
+      </div>
+    );
+  })();
+
   const canvasArea = (
     <div className="flex-1 overflow-auto flex items-start justify-center p-1"
       onMouseLeave={() => setHover(null)}>
+      <div style={{ display:'flex', flexDirection:'row', alignItems:'flex-start' }}>
       <div style={{ position:'relative', display:'inline-block' }}>
         <canvas ref={canvasRef}
           onClick={handleCanvasClick}
@@ -1274,8 +1585,8 @@ export function BattleSim() {
           className="cursor-crosshair border border-gray-700 touch-none"
           style={{ imageRendering:'pixelated', display:'block' }}
         />
-        {/* 活性化SPマス フレームオーバーレイ（試し置きモードと統一） */}
-        {activatedSPPos && (
+        {/* 活性化SPマス フレームオーバーレイ（カード配置中は非表示にしてタイミングを分離） */}
+        {activatedSPPos && animPhase !== 'reveal' && animPhase !== 'p1-place' && animPhase !== 'resolve' && (
           <div style={{ position:'absolute', top:0, left:0, pointerEvents:'none' }}>
             {activatedSPPos.p1.map(([r,c]) => (
               <div key={`p1sp-${r}-${c}`} className="bsim-fp1"
@@ -1287,6 +1598,8 @@ export function BattleSim() {
             ))}
           </div>
         )}
+      </div>
+      {animCardPanel}
       </div>
     </div>
   );
@@ -1467,6 +1780,7 @@ export function BattleSim() {
   if (isLandscape) {
     return (
       <div className="flex flex-row overflow-hidden" style={{ height: '100%', position: 'relative' }}>
+        {animOverlay}
         {trashOverlay}
         {exitConfirmEl}
         {gameEndOverlay}
@@ -1498,6 +1812,7 @@ export function BattleSim() {
   // portrait
   return (
     <div className="flex flex-col overflow-hidden" style={{ height: '100%', position: 'relative' }}>
+      {animOverlay}
       {trashOverlay}
       {exitConfirmEl}
       {gameEndOverlay}
