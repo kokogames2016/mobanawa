@@ -117,6 +117,7 @@ export function Help() {
             <div>
               <div className="font-bold text-gray-300 mb-1">2026/06/20</div>
               <ul className="space-y-1 list-disc list-inside text-gray-400">
+                <li>対戦モードのCPU（レベル4）を大幅強化しました</li>
                 <li>対戦モードの演出を変更しました</li>
                 <li>対戦モードのCPU（レベル2）の挙動を調整しました</li>
                 <li>試し置き・対戦モード：SA配置時にSPマス（自陣・敵陣問わず）を上書きできるバグを修正</li>

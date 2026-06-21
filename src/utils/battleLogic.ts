@@ -770,6 +770,212 @@ function scoreSAMove(
   return overwrites * 5 + newCells * 2 + p2Space * 1 + fireBonus + selfSPBonus + levelBonus;
 }
 
+// ─── Lv4チート：p1Action参照・先読み ────────────────────────────────────────
+
+/** P1の手札から置ける最大獲得マス数を推定する（次ターン先読みペナルティ用） */
+function estimateP1BestGain(
+  grid: CellState[][], p1Hand: string[], cardMap: Map<string, Card>
+): number {
+  let maxGain = 0;
+  for (const cardId of p1Hand) {
+    const card = cardMap.get(cardId);
+    if (!card?.shape) continue;
+    for (const { x, y, rotation } of getAllValidPlacements(grid, card, 'p1', false)) {
+      const ng = simulateGrid(grid, card, x, y, rotation, 'p1');
+      let gain = 0;
+      for (let r = 0; r < ng.length; r++)
+        for (let c = 0; c < (ng[0]?.length ?? 0); c++) {
+          const was = grid[r][c], now = ng[r][c];
+          if ((now === 'p1' || now === 'p1_sp') && was !== 'p1' && was !== 'p1_sp') gain++;
+        }
+      if (gain > maxGain) maxGain = gain;
+    }
+  }
+  return maxGain;
+}
+
+/** P1手札の総合的な脅威スコア（サイズ合計・SP所持数） */
+function estimateP1HandStrength(p1Hand: string[], cardMap: Map<string, Card>): number {
+  let total = 0;
+  for (const id of p1Hand) {
+    const c = cardMap.get(id);
+    if (c) total += c.size + (c.specialPos ? 2 : 0);
+  }
+  return total;
+}
+
+/**
+ * Lv4チート：p1ActionベースのSP/通常マス上書きボーナス＋先読みペナルティ。
+ *
+ * ナワバトラーの上書きルール：「マス数が少ないカードが勝つ」
+ * - P2カードがP1カードより小さい場合のみ上書き優位（sizeAdvantage）
+ * - SP-on-SP：P2のSPマスがP1のSPマスに重なる配置を最優先
+ *
+ * フェーズ別優先度：
+ * - T1-6（序盤〜中盤前半）：P1 SPマス破壊を優先
+ * - T7+（中盤後半〜終盤）：P2自身のSP確保を優先
+ * - 両立する配置は常に最優先
+ */
+function scoreLv4Extra(
+  card: Card,
+  newGrid: CellState[][],
+  p1ActionSPCells: Set<string>,
+  p1ActionNormCells: Set<string>,
+  p1CardSize: number,
+  p1Hand: string[], cardMap: Map<string, Card>,
+  p1Score: number, p2Score: number,
+  currentTurn: number
+): number {
+  const rows = newGrid.length, cols = newGrid[0]?.length ?? 0;
+  let extra = 0;
+
+  // P2カードがP1カードより小さい場合のみ上書き優位
+  const sizeAdvantage = p1CardSize > 0 && card.size < p1CardSize;
+  const isEarlyMid = currentTurn <= 6;
+
+  let p1SPonSPHit = 0; // P2 SPマス → P1 SPマスに重なる（最優先）
+  let p1SPHit     = 0; // P2 通常マス → P1 SPマスに重なる
+  let p1NormHit   = 0; // P2（いずれか） → P1 通常マスに重なる
+  let p2NewSP     = 0; // この配置でP2が新たに確保するSPマス数
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const now = newGrid[r][c];
+      if (now !== 'p2' && now !== 'p2_sp') continue;
+      const key = `${r},${c}`;
+
+      if (now === 'p2_sp') {
+        p2NewSP++;
+        if (p1ActionSPCells.has(key)) {
+          p1SPonSPHit++; // SP-on-SP上書き
+        } else if (p1ActionNormCells.has(key)) {
+          p1NormHit++;
+        }
+      } else {
+        if (p1ActionSPCells.has(key)) {
+          p1SPHit++;
+        } else if (p1ActionNormCells.has(key)) {
+          p1NormHit++;
+        }
+      }
+    }
+  }
+
+  const losing = p1Score - p2Score;
+
+  // ── SP-on-SP上書き（最高優先：サイズ優位時のみ有効）──────────────────────
+  if (p1SPonSPHit > 0 && sizeAdvantage) {
+    // 両立ボーナス：P1 SP破壊 + P2 SP確保が同時成立
+    const baseBonus = losing >= 10 ? 50 : Math.random() < 0.5 ? 38 : 0;
+    extra += p1SPonSPHit * baseBonus;
+  }
+
+  // ── P2通常マス → P1 SPマス上書き（サイズ優位かつ序盤〜中盤前半で優先）──
+  if (p1SPHit > 0 && sizeAdvantage) {
+    if (isEarlyMid) {
+      const baseBonus = losing >= 10 ? 30 : Math.random() < 0.5 ? 20 : 0;
+      extra += p1SPHit * baseBonus;
+    } else {
+      extra += p1SPHit * 8; // T7+でも価値はあるが優先度を下げる
+    }
+  }
+
+  // ── P1通常マス上書きボーナス（サイズ優位時のみ）────────────────────────
+  if (p1NormHit > 0 && sizeAdvantage) {
+    extra += p1NormHit * 5;
+  }
+
+  // ── T7+：P2自身のSP確保を追加ボーナスで重み付け ─────────────────────────
+  if (!isEarlyMid && p2NewSP > 0) {
+    extra += p2NewSP * 10; // scoreNormalMoveのnewSP*5に上乗せ
+  }
+
+  // ── 次ターン先読みペナルティ ──────────────────────────────────────────────
+  if (p1Hand.length > 0) {
+    const p1Gain = estimateP1BestGain(newGrid, p1Hand, cardMap);
+    extra -= p1Gain * 0.9;
+  }
+
+  return extra;
+}
+
+/**
+ * Lv4専用序盤評価（T1〜T4）。
+ * T1：前線最深部・壁隣接優先。
+ * T2：p1ActionNormCells/p1ActionSPCellsを参照し、P1配置距離で攻撃継続か壁形成か判定。
+ * T3-T4：前線維持＋壁隣接ボーナス。
+ */
+function scoreLv4Early(
+  grid: CellState[][], newGrid: CellState[][],
+  si: StageInfo | undefined,
+  currentTurn: number,
+  p1ActionSPCells: Set<string>,
+  p1ActionNormCells: Set<string>
+): number {
+  const rows = newGrid.length, cols = newGrid[0]?.length ?? 0;
+  let frontierMax = 0, newCells = 0, wallAdjBonus = 0;
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const was = grid[r][c], now = newGrid[r][c];
+      if ((now !== 'p2' && now !== 'p2_sp') || (was === 'p2' || was === 'p2_sp')) continue;
+      newCells++;
+      if (si) {
+        const fn = frontierNorm(r, si);
+        if (fn > frontierMax) frontierMax = fn;
+      }
+      // 壁（W/blocked）隣接ボーナス
+      for (const [dr, dc] of [[-1,0],[1,0],[0,-1],[0,1]] as const) {
+        const nr = r+dr, nc = c+dc;
+        if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
+          const adj = grid[nr][nc];
+          if (adj === 'W' || adj === 'blocked') { wallAdjBonus += 3; break; }
+        }
+      }
+    }
+  }
+
+  if (currentTurn === 1) {
+    return frontierMax * 15 + newCells * 1.5 + wallAdjBonus;
+  }
+
+  if (currentTurn === 2) {
+    // P1が今ターン置いたマスのうち、P2スタートに最も近い行距離を求める
+    let p1MinRowDist = 999;
+    if (si) {
+      for (const key of [...p1ActionSPCells, ...p1ActionNormCells]) {
+        const r = parseInt(key.split(',')[0], 10);
+        const dist = Math.abs(r - si.p2StartRow);
+        if (dist < p1MinRowDist) p1MinRowDist = dist;
+      }
+    }
+
+    // P1が遠い（縦8マス以上）→ 攻撃継続（前線押し上げ優先）
+    if (p1MinRowDist >= 8) {
+      return frontierMax * 14 + newCells * 2 + wallAdjBonus;
+    }
+
+    // P1が近い → P1配置マスに隣接する形で壁形成
+    let adjToP1ActionBonus = 0;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const was = grid[r][c], now = newGrid[r][c];
+        if ((now !== 'p2' && now !== 'p2_sp') || (was === 'p2' || was === 'p2_sp')) continue;
+        for (const [dr, dc] of [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]] as const) {
+          const key = `${r+dr},${c+dc}`;
+          if (p1ActionNormCells.has(key) || p1ActionSPCells.has(key)) {
+            adjToP1ActionBonus += 5; break;
+          }
+        }
+      }
+    }
+    return adjToP1ActionBonus + wallAdjBonus + newCells * 1.5 + frontierMax * 6;
+  }
+
+  // T3-T4：前線維持＋壁隣接継続
+  return frontierMax * 10 + newCells * 2 + wallAdjBonus;
+}
+
 // ─── CPU最善手計算 ────────────────────────────────────────────────────────────
 
 export function computeCpuMove(
@@ -780,12 +986,16 @@ export function computeCpuMove(
   availableSP: number,
   remainingTurns: number,
   stageInfo?: StageInfo,
-  allCards?: Card[]
+  allCards?: Card[],
+  p1Hand?: string[],
+  p1Pile?: string[],
+  p1Action?: { cardId: string; x: number; y: number; rotation: Rotation; isSA: boolean } | 'pass'
 ): CpuMove | 'pass' {
   const maxTurns    = 12;
   const currentTurn = maxTurns - remainingTurns;
   const isLate      = currentTurn > 8;
   const isFinalTurn = currentTurn === 12;
+  const isEarlyLv4  = level === 4 && currentTurn <= 4;
 
   // 危険地帯を事前に一度だけ計算（Lv1〜3のみ、Lv4は対象外）
   const dangerInfo: DangerInfo | undefined = (level <= 3 && allCards && allCards.length > 0)
@@ -796,6 +1006,37 @@ export function computeCpuMove(
   // 最終ターンは全レベルで必ずSA検討
   const considerSA  = isFinalTurn || isLate || (level === 2 && currentTurn > 4) || level === 4;
 
+  // ── Lv4チート：事前計算 ──────────────────────────────────────────────────────
+  // P1が今ターン新たに置くマスのSet（SPと通常を分離）
+  const p1ActionSPCells   = new Set<string>();
+  const p1ActionNormCells = new Set<string>();
+  let p1CardSize = 0;
+  if (level === 4 && p1Action && p1Action !== 'pass') {
+    const p1Card = cardMap.get(p1Action.cardId);
+    if (p1Card?.shape) {
+      p1CardSize = p1Card.size;
+      const afterP1 = simulateGrid(grid, p1Card, p1Action.x, p1Action.y, p1Action.rotation, 'p1');
+      for (let r = 0; r < afterP1.length; r++) {
+        for (let c = 0; c < (afterP1[0]?.length ?? 0); c++) {
+          const was = grid[r][c], now = afterP1[r][c];
+          if (was === 'p1' || was === 'p1_sp') continue;
+          if (now === 'p1_sp') p1ActionSPCells.add(`${r},${c}`);
+          else if (now === 'p1') p1ActionNormCells.add(`${r},${c}`);
+        }
+      }
+    }
+  }
+
+  // P1手札強度（SA前倒し判定）
+  const p1HandStrength = (level === 4 && p1Hand && p1Hand.length > 0)
+    ? estimateP1HandStrength(p1Hand, cardMap)
+    : 0;
+  const lv4AggressiveSA = level === 4 && p1HandStrength > 30;
+
+  // 現在スコア（Lv4のみ）
+  const p1ScoreNow = level === 4 ? countType(grid, 'p1', 'p1_sp') : 0;
+  const p2ScoreNow = level === 4 ? countType(grid, 'p2', 'p2_sp') : 0;
+
   let bestNormalScore = -Infinity, bestNormalMove: CpuMove | null = null;
   let bestSAScore     = -Infinity, bestSAMove:     CpuMove | null = null;
 
@@ -803,15 +1044,31 @@ export function computeCpuMove(
     const card = cardMap.get(cardId);
     if (!card?.shape) continue;
 
-    const isSWCard = !card.specialPos; // SPマスを持たないカード
+    const isSWCard = !card.specialPos;
 
-    // 通常配置（全4回転×全座標）
-    // このカードを使った後の残り手札（SP発火ポテンシャル評価用）
     const remainingHand = hand.filter(id => id !== cardId);
     for (const { x, y, rotation } of getAllValidPlacements(grid, card, 'p2', false)) {
       let s = scoreNormalMove(grid, card, x, y, rotation, level, remainingTurns, stageInfo, remainingHand, cardMap, dangerInfo);
-      // SWカードは通常配置を抑制してSAに誘導（SA選択肢がある場合のみ意味を持つ）
       if (isSWCard && considerSA && card.spp > 0 && availableSP >= card.spp) s -= 6;
+
+      // Lv4チート：p1Action参照の追加スコア
+      if (level === 4) {
+        const newGrid = simulateGrid(grid, card, x, y, rotation, 'p2');
+        s += scoreLv4Extra(
+          card,
+          newGrid,
+          p1ActionSPCells, p1ActionNormCells,
+          p1CardSize,
+          p1Hand ?? [], cardMap,
+          p1ScoreNow, p2ScoreNow,
+          currentTurn
+        );
+        // 序盤（T1-T4）専用評価を上乗せ
+        if (isEarlyLv4) {
+          s += scoreLv4Early(grid, newGrid, stageInfo, currentTurn, p1ActionSPCells, p1ActionNormCells);
+        }
+      }
+
       if (s > bestNormalScore || (s === bestNormalScore && Math.random() < 0.15)) {
         bestNormalScore = s;
         bestNormalMove  = { cardId, x, y, rotation, isSA: false, cardName: card.name };
@@ -822,7 +1079,6 @@ export function computeCpuMove(
     if (considerSA && card.spp > 0 && availableSP >= card.spp) {
       for (const { x, y, rotation } of getAllValidPlacements(grid, card, 'p2', true)) {
         let s = scoreSAMove(grid, card, x, y, rotation, level, isFinalTurn);
-        // SWカードのSA優先ボーナス（SPマスを持たないためSA使用が最も効率的）
         if (isSWCard) s += 8;
         if (s > bestSAScore) {
           bestSAScore = s;
@@ -837,14 +1093,14 @@ export function computeCpuMove(
   // SA優先閾値
   if (bestSAMove !== null) {
     if (isFinalTurn) {
-      // 最終ターン：SPが使えるなら積極的にSA（スコア0超なら常に選択）
       if (bestSAScore > 0) return bestSAMove;
     } else if (isLate) {
-      // 終盤（T9-11）：全レベルで積極SA
       const threshold = level === 1 ? 12 : level === 2 ? -2 : level === 3 ? 2 : -3;
       if (bestSAScore >= bestNormalScore + threshold) return bestSAMove;
+    } else if (level === 4 && lv4AggressiveSA) {
+      // P1手札が強い場合は先手SAを優先
+      if (bestSAScore >= bestNormalScore - 5) return bestSAMove;
     } else if (level === 2 && currentTurn > 4) {
-      // Lv2中盤：発火準備を優先。SA使用は通常より大きく有利な場合のみ
       if (bestSAScore >= bestNormalScore + 15) return bestSAMove;
     }
   }

@@ -560,7 +560,7 @@ export function BattleSim() {
     if (waitFor !== 'p2' || !cpuMode || p1Action === null) return;
     setCpuThinking(true);
     const timer = setTimeout(() => {
-      const move = computeCpuMove(grid, p2Hand, cardMap, cpuLevel, availP2SP, MAX_TURNS - turn, stageInfo, cards);
+      const move = computeCpuMove(grid, p2Hand, cardMap, cpuLevel, availP2SP, MAX_TURNS - turn, stageInfo, cards, p1Hand, p1Pile, p1Action ?? undefined);
       let newGrid = grid;
       let p2CardId: string | null = null;
       let p2isSA = false;
