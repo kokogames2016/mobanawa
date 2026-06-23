@@ -31,8 +31,8 @@ const tap: React.CSSProperties = {
 const MY_DECK_SECTION_KEY     = 'nawabattler_mydecksection_open';
 const SAMPLE_DECK_SECTION_KEY = 'nawabattler_sampledecksection_open';
 
-// Snapshot type for undo/redo (main + reserve)
-type SlotSnap = { main: string[]; reserve: string[] };
+// Snapshot type for undo/redo (main + reserve) — sparse: null = empty slot
+type SlotSnap = { main: (string | null)[]; reserve: (string | null)[] };
 
 export function DeckBuilder() {
   const {
@@ -95,6 +95,12 @@ export function DeckBuilder() {
   const [dragOverDeckId, setDragOverDeckId] = useState<string | null>(null);
   const [dragInsertAfter, setDragInsertAfter] = useState(false);
 
+  // ── Sparse slot state (null = empty slot) ────────────────────────────────────
+  const [mainSlots,    setMainSlots]    = useState<(string | null)[]>(() => Array(15).fill(null));
+  const [reserveSlots, setReserveSlots] = useState<(string | null)[]>(() => Array(6).fill(null));
+  // Index of the empty slot the user tapped first (0-14 = main, 15-20 = reserve)
+  const [pendingSlotIdx, setPendingSlotIdx] = useState<number | null>(null);
+
   // ── Card-slot drag state ──────────────────────────────────────────────────────
   const [dragFromIdx, setDragFromIdx] = useState<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
@@ -133,12 +139,12 @@ export function DeckBuilder() {
   const userDecks   = decks.filter(d => d.id !== 'all' && !isSampleDeck(d.id));
   const sampleDecks = decks.filter(d => isSampleDeck(d.id));
 
-  // Slot arrays
-  const mainIds    = editDeck.cardIds;
-  const reserveIds = editDeck.reserveCardIds ?? [];
+  // Slot arrays (derived from sparse local state)
+  const mainIds    = mainSlots.filter((x): x is string => x !== null);
+  const reserveIds = reserveSlots.filter((x): x is string => x !== null);
   const totalCards = mainIds.length + reserveIds.length;
 
-  // Reset undo/redo when a different deck is loaded
+  // Reset undo/redo and sync sparse slots when a different deck is loaded
   useEffect(() => {
     const currentId = editDeck.id;
     if (currentId !== prevDeckIdRef.current) {
@@ -146,7 +152,16 @@ export function DeckBuilder() {
       setUndoStack([]);
       setRedoStack([]);
     }
-  }, [editDeck.id]);
+    const mIds = editDeck.cardIds.slice(0, 15);
+    const rIds = (editDeck.reserveCardIds ?? []).slice(0, 6);
+    const newMain: (string | null)[] = Array(15).fill(null);
+    const newReserve: (string | null)[] = Array(6).fill(null);
+    mIds.forEach((id, i) => { newMain[i] = id; });
+    rIds.forEach((id, i) => { newReserve[i] = id; });
+    setMainSlots(newMain);
+    setReserveSlots(newReserve);
+    setPendingSlotIdx(null);
+  }, [editDeck.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Folder → deck mapping
   const deckFolderMap = useMemo(() => {
@@ -172,78 +187,145 @@ export function DeckBuilder() {
     return result;
   }, [cards, sortKey, sortAsc]);
 
-  const mainCards    = mainIds.map(id => cards.find(c => c.id === id)).filter(Boolean) as Card[];
-  const reserveCards = reserveIds.map(id => cards.find(c => c.id === id)).filter(Boolean) as Card[];
-  const allDeckCards = [...mainCards, ...reserveCards];
+  // Sparse card arrays (index-matched to slots; undefined = empty slot)
+  const mainCardSlots    = mainSlots.map(id => id ? (cards.find(c => c.id === id) ?? undefined) : undefined);
+  const reserveCardSlots = reserveSlots.map(id => id ? (cards.find(c => c.id === id) ?? undefined) : undefined);
+  const allDeckCards = [...mainCardSlots, ...reserveCardSlots].filter(Boolean) as Card[];
   const totalSize  = allDeckCards.reduce((s, c) => s + c.size, 0);
   const swCount    = allDeckCards.filter(c => !c.hasSpecialSquare).length;
   const sizeGroups = SIZE_GROUPS.map(g => ({
     label: g.label,
     count: allDeckCards.filter(c => c.size >= g.min && c.size <= g.max).length,
   }));
-  const incomplete = mainIds.length < 15;
+  const incomplete = mainIds.length < 15; // filled card count, not slot count
 
   // ── Slot operations (with undo history) ──────────────────────────────────────
-  function applySlots(newMain: string[], newReserve: string[], skipHistory = false) {
+  function applySlots(newMain: (string | null)[], newReserve: (string | null)[], skipHistory = false) {
     if (!skipHistory) {
-      setUndoStack(s => [...s.slice(-19), { main: mainIds, reserve: reserveIds }]);
+      setUndoStack(s => [...s.slice(-19), { main: [...mainSlots], reserve: [...reserveSlots] }]);
       setRedoStack([]);
     }
-    setCurrentDeck({ ...editDeck, cardIds: newMain, reserveCardIds: newReserve, name: deckName, updatedAt: Date.now() });
+    setMainSlots(newMain);
+    setReserveSlots(newReserve);
+    const compactMain    = newMain.filter((x): x is string => x !== null);
+    const compactReserve = newReserve.filter((x): x is string => x !== null);
+    setCurrentDeck({ ...editDeck, cardIds: compactMain, reserveCardIds: compactReserve, name: deckName, updatedAt: Date.now() });
   }
 
   function addCard(card: Card) {
-    if (mainIds.includes(card.id) || reserveIds.includes(card.id)) return;
+    const alreadyInDeck = mainSlots.includes(card.id) || reserveSlots.includes(card.id);
+
+    // Pending slot: move/insert at the tapped empty slot
+    if (pendingSlotIdx !== null) {
+      const idx = pendingSlotIdx;
+      setPendingSlotIdx(null);
+
+      if (alreadyInDeck) {
+        // Move existing card: clear its current position, place at pending slot
+        const newMain    = [...mainSlots];
+        const newReserve = [...reserveSlots];
+        const srcMain = newMain.indexOf(card.id);
+        const srcRes  = newReserve.indexOf(card.id);
+        if (srcMain >= 0)  newMain[srcMain]    = null;
+        if (srcRes  >= 0)  newReserve[srcRes]  = null;
+        if (idx < 15) newMain[idx] = card.id;
+        else          newReserve[idx - 15] = card.id;
+        applySlots(newMain, newReserve);
+      } else {
+        if (totalCards >= 21) return;
+        if (idx < 15) {
+          const newMain = [...mainSlots];
+          newMain[idx] = card.id;
+          applySlots(newMain, reserveSlots);
+        } else {
+          const newReserve = [...reserveSlots];
+          newReserve[idx - 15] = card.id;
+          applySlots(mainSlots, newReserve);
+        }
+      }
+      return;
+    }
+
+    if (alreadyInDeck) return;
     if (totalCards >= 21) return;
-    if (mainIds.length < 15) {
-      applySlots([...mainIds, card.id], reserveIds);
+
+    // Default: fill the first empty main slot, then reserve
+    const firstMainEmpty = mainSlots.indexOf(null);
+    if (firstMainEmpty >= 0) {
+      const newMain = [...mainSlots];
+      newMain[firstMainEmpty] = card.id;
+      applySlots(newMain, reserveSlots);
     } else {
-      applySlots(mainIds, [...reserveIds, card.id]);
+      const firstResEmpty = reserveSlots.indexOf(null);
+      if (firstResEmpty >= 0) {
+        const newReserve = [...reserveSlots];
+        newReserve[firstResEmpty] = card.id;
+        applySlots(mainSlots, newReserve);
+      }
     }
   }
 
   function removeCard(id: string) {
-    if (mainIds.includes(id)) {
-      applySlots(mainIds.filter(x => x !== id), reserveIds);
+    setPendingSlotIdx(null);
+    const mainIdx = mainSlots.indexOf(id);
+    if (mainIdx >= 0) {
+      const newMain = [...mainSlots];
+      newMain[mainIdx] = null; // leave the slot empty; do not compact
+      applySlots(newMain, reserveSlots);
     } else {
-      applySlots(mainIds, reserveIds.filter(x => x !== id));
+      const resIdx = reserveSlots.indexOf(id);
+      if (resIdx >= 0) {
+        const newReserve = [...reserveSlots];
+        newReserve[resIdx] = null;
+        applySlots(mainSlots, newReserve);
+      }
     }
   }
 
-  // Unified slot index: 0-14 = main, 15-17 = reserve
+  // Unified slot index: 0-14 = main, 15-20 = reserve
   function swapSlots(fromIdx: number, toIdx: number) {
     if (fromIdx === toIdx) return;
-    // Build a padded 21-element array (null = empty)
-    const all: (string | null)[] = new Array(21).fill(null);
-    mainIds.forEach((id, i) => { all[i] = id; });
-    reserveIds.forEach((id, i) => { all[15 + i] = id; });
+    const all: (string | null)[] = [...mainSlots, ...reserveSlots];
     if (!all[fromIdx] || !all[toIdx]) return; // only swap filled slots
     [all[fromIdx], all[toIdx]] = [all[toIdx], all[fromIdx]];
-    const newMain    = all.slice(0, 15).filter((x): x is string => x !== null);
-    const newReserve = all.slice(15, 21).filter((x): x is string => x !== null);
-    applySlots(newMain, newReserve);
+    applySlots(all.slice(0, 15), all.slice(15, 21));
   }
 
   function resetDeck() {
     setUndoStack([]);
     setRedoStack([]);
+    setPendingSlotIdx(null);
+    const emptyMain: (string | null)[]    = Array(15).fill(null);
+    const emptyReserve: (string | null)[] = Array(6).fill(null);
+    setMainSlots(emptyMain);
+    setReserveSlots(emptyReserve);
     setCurrentDeck({ ...editDeck, cardIds: [], reserveCardIds: [], updatedAt: Date.now() });
   }
 
   function handleUndo() {
     if (undoStack.length === 0) return;
     const prev = undoStack[undoStack.length - 1];
-    setRedoStack(s => [{ main: mainIds, reserve: reserveIds }, ...s]);
+    setRedoStack(s => [{ main: [...mainSlots], reserve: [...reserveSlots] }, ...s]);
     setUndoStack(s => s.slice(0, -1));
-    setCurrentDeck({ ...editDeck, cardIds: prev.main, reserveCardIds: prev.reserve, updatedAt: Date.now() });
+    setMainSlots(prev.main);
+    setReserveSlots(prev.reserve);
+    const compactMain    = prev.main.filter((x): x is string => x !== null);
+    const compactReserve = prev.reserve.filter((x): x is string => x !== null);
+    setCurrentDeck({ ...editDeck, cardIds: compactMain, reserveCardIds: compactReserve, updatedAt: Date.now() });
+    setPendingSlotIdx(null);
   }
 
   function handleRedo() {
     if (redoStack.length === 0) return;
     const next = redoStack[0];
-    setUndoStack(s => [...s, { main: mainIds, reserve: reserveIds }]);
+    setUndoStack(s => [...s, { main: [...mainSlots], reserve: [...reserveSlots] }]);
     setRedoStack(s => s.slice(1));
-    setCurrentDeck({ ...editDeck, cardIds: next.main, reserveCardIds: next.reserve, updatedAt: Date.now() });
+    setMainSlots(next.main);
+    setReserveSlots(next.reserve);
+    const compactMain    = next.main.filter((x): x is string => x !== null);
+    const compactReserve = next.reserve.filter((x): x is string => x !== null);
+    setCurrentDeck({ ...editDeck, cardIds: compactMain, reserveCardIds: compactReserve, updatedAt: Date.now() });
+    setPendingSlotIdx(null);
   }
 
   function handleSave() {
@@ -557,6 +639,7 @@ export function DeckBuilder() {
   function renderDeckSlot(slotIdx: number, card: Card | undefined, emptyLabel: React.ReactNode, compact = false) {
     const isDragSrc  = dragFromIdx === slotIdx;
     const isDragOver = dragOverIdx === slotIdx && dragFromIdx !== null && dragOverIdx !== dragFromIdx;
+    const isPending  = pendingSlotIdx === slotIdx && !card;
 
     function onTouchStart() {
       if (!card) return;
@@ -607,22 +690,30 @@ export function DeckBuilder() {
         onTouchMove={onTouchMoveSlot}
         onTouchEnd={onTouchEnd}
         onClick={() => {
-          if (card && dragFromIdx === null && !touchDraggingRef.current) removeCard(card.id);
+          if (dragFromIdx !== null || touchDraggingRef.current) return;
+          if (card) {
+            removeCard(card.id);
+          } else {
+            // Toggle pending slot selection
+            setPendingSlotIdx(prev => prev === slotIdx ? null : slotIdx);
+          }
         }}
         title={card
           ? compact
             ? `${card.name}（${card.size}m${card.spp > 0 ? ` SP${card.spp}` : ''}）タップで削除`
             : `${card.name}（タップで削除 / ドラッグで入れ替え）`
-          : '空き'}
-        style={{ cursor: card ? (isDragSrc ? 'grabbing' : 'grab') : 'default', touchAction: 'none' }}
+          : isPending ? 'カード一覧からカードを選択してください' : '空きスロット（タップで選択）'}
+        style={{ cursor: card ? (isDragSrc ? 'grabbing' : 'grab') : 'pointer', touchAction: 'none' }}
         className={`rounded border text-left transition-colors select-none ${
           isDragOver
             ? 'border-orange-400 bg-orange-950 ring-1 ring-orange-400'
             : isDragSrc
               ? 'border-gray-500 bg-gray-700 opacity-50'
-              : card
-                ? 'bg-gray-800 border-gray-600'
-                : 'bg-gray-900 border-dashed border-gray-700 opacity-40'
+              : isPending
+                ? 'border-blue-400 bg-blue-950 ring-1 ring-blue-400 opacity-90'
+                : card
+                  ? 'bg-gray-800 border-gray-600'
+                  : 'bg-gray-900 border-dashed border-gray-700 opacity-40'
         }`}
       >
         {card ? (
@@ -644,13 +735,16 @@ export function DeckBuilder() {
           )
         ) : (
           compact ? (
-            /* Reserve compact empty — height matches filled slots via grid auto-sizing */
             <div className="flex items-center justify-center py-1">
-              <span className="text-gray-700" style={{ fontSize: '7px' }}>{emptyLabel}</span>
+              <span className={isPending ? 'text-blue-400' : 'text-gray-700'} style={{ fontSize: '7px' }}>
+                {isPending ? '▶' : emptyLabel}
+              </span>
             </div>
           ) : (
             <div className="p-0.5 h-10 flex items-center justify-center">
-              <span className="text-gray-700" style={{ fontSize: '10px' }}>{emptyLabel}</span>
+              <span className={isPending ? 'text-blue-400' : 'text-gray-700'} style={{ fontSize: '10px' }}>
+                {isPending ? 'ここに追加' : emptyLabel}
+              </span>
             </div>
           )
         )}
@@ -969,19 +1063,21 @@ export function DeckBuilder() {
           </span>
         ))}
         {isPreset && <span className="text-blue-400 text-xs ml-auto">「マイに保存」で新規作成</span>}
-        {!isPreset && totalCards > 1 && (
+        {pendingSlotIdx !== null ? (
+          <span className="text-blue-400 text-xs ml-auto animate-pulse">カードを選択してください</span>
+        ) : !isPreset && totalCards > 1 ? (
           <span className="text-gray-600 text-xs ml-auto">長押し/ドラッグで入れ替え</span>
-        )}
+        ) : null}
       </div>
 
       {/* Slot grid with ref for touch-drag passive listener */}
       <div ref={slotContainerRef} className="flex flex-col gap-1">
         {/* Main slots 0-14 */}
         <div className="grid gap-0.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(60px, 1fr))' }}>
-          {Array.from({ length: 15 }).map((_, i) => renderDeckSlot(i, mainCards[i], i + 1))}
+          {Array.from({ length: 15 }).map((_, i) => renderDeckSlot(i, mainCardSlots[i], i + 1))}
         </div>
 
-        {/* Reserve separator + slots 15-17 */}
+        {/* Reserve separator + slots 15-20 */}
         <div>
           <div className="flex items-center gap-1 my-0.5">
             <div className="h-px flex-1 bg-gray-700" />
@@ -990,9 +1086,8 @@ export function DeckBuilder() {
             </span>
             <div className="h-px flex-1 bg-gray-700" />
           </div>
-          {/* grid-cols-6: 6スロットを1行に。gap-0.5で隙間を最小化 */}
           <div className="grid grid-cols-6 gap-0.5">
-            {Array.from({ length: 6 }).map((_, i) => renderDeckSlot(15 + i, reserveCards[i], `予${i + 1}`, true))}
+            {Array.from({ length: 6 }).map((_, i) => renderDeckSlot(15 + i, reserveCardSlots[i], `予${i + 1}`, true))}
           </div>
         </div>
       </div>
@@ -1033,9 +1128,15 @@ export function DeckBuilder() {
       <div className="flex-1 overflow-y-auto p-1">
         <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${cardCellSize * 10}px, 1fr))` }}>
           {sortedCards.map(card => {
-            const inDeck = mainIds.includes(card.id) || reserveIds.includes(card.id);
-            const full   = totalCards >= 21;
-            const disabled = inDeck || full;
+            const inDeck = mainSlots.includes(card.id) || reserveSlots.includes(card.id);
+            // When a pending slot is selected:
+            //   - deck-internal cards: tappable (will move to pending slot)
+            //   - non-deck cards: tappable unless deck is full
+            // Normal mode: disable if already in deck or deck full
+            const full = totalCards >= 21;
+            const disabled = pendingSlotIdx !== null
+              ? (inDeck ? false : full)     // pending: in-deck cards always tappable; new cards blocked only if full
+              : (inDeck || full);
             // カード名は優先的に大きく表示するため cellSize が大きいほどフォントも拡大
             const nameFontSize = `${6 + cardCellSize * 0.8}px`;
             const infoFontSize = `${5 + cardCellSize * 0.5}px`;

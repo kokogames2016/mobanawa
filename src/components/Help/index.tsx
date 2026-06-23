@@ -115,6 +115,13 @@ export function Help() {
           <h2 className="text-base font-bold text-orange-400 mb-2">更新履歴</h2>
           <div className="space-y-3 text-xs text-gray-400">
             <div>
+              <div className="font-bold text-gray-300 mb-1">2026/06/23</div>
+              <ul className="space-y-1 list-disc list-inside text-gray-400">
+                <li>デッキ作成のスロット操作を改善しました</li>
+                <li>試し置きの操作性を改善しました</li>
+              </ul>
+            </div>
+            <div>
               <div className="font-bold text-gray-300 mb-1">2026/06/21</div>
               <ul className="space-y-1 list-disc list-inside text-gray-400">
                 <li>対戦モードのCPU（レベル4）を大幅強化しました</li>

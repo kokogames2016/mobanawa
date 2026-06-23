@@ -275,7 +275,7 @@ export function BoardSim() {
       if (!card?.shape) { map.set(id, { normal: false, sa: false }); continue; }
       map.set(id, {
         normal: hasAnyValidPlacement(gameState.grid, card.shape, 'p1', false, freePlacement),
-        sa: card.spp > 0 ? hasAnyValidPlacement(gameState.grid, card.shape, 'p1', true, freePlacement) : false,
+        sa: card.spp > 0 ? hasAnyValidPlacement(gameState.grid, card.shape, 'p1', true, false) : false,
       });
     }
     return map;
@@ -290,7 +290,7 @@ export function BoardSim() {
       if (!card?.shape) { map.set(id, { normal: false, sa: false }); continue; }
       map.set(id, {
         normal: hasAnyValidPlacement(gameState.grid, card.shape, 'p2', false, freePlacement),
-        sa: card.spp > 0 ? hasAnyValidPlacement(gameState.grid, card.shape, 'p2', true, freePlacement) : false,
+        sa: card.spp > 0 ? hasAnyValidPlacement(gameState.grid, card.shape, 'p2', true, false) : false,
       });
     }
     return map;
@@ -501,9 +501,9 @@ export function BoardSim() {
     const bounds = getShapeBounds(rotated);
     const ax = gx - (isFinite(bounds.minC) ? bounds.minC : 0);
     const ay = gy - (isFinite(bounds.minR) ? bounds.minR : 0);
-    if (!canPlace(gameState.grid, rotated, ax, ay, player, isSA, freePlacement)) return;
 
     // Set pending placement (same flow as touch) — confirm via 配置確定 button
+    // Note: validity is checked in confirmPendingPlacement, so preview is always allowed here
     const pivotX = ax + (bounds.minC + bounds.maxC) / 2;
     const pivotY = ay + (bounds.minR + bounds.maxR) / 2;
     setPendingPlacement({ cardId: selectedCard, x: ax, y: ay, pivotX, pivotY, rotation, isSA, player });
@@ -569,7 +569,7 @@ export function BoardSim() {
     const card = getCard(cardId);
     if (!card?.shape) { setPendingPlacement(null); return; }
     const rotated = rotateShape(card.shape, rotation);
-    if (!canPlace(gameState.grid, rotated, x, y, player, isSA, freePlacement)) { setPendingPlacement(null); return; }
+    if (!canPlace(gameState.grid, rotated, x, y, player, isSA, isSA ? false : freePlacement)) { setPendingPlacement(null); return; }
     isSA ? playSAPlace() : playCardPlace();
     const action: PlaceAction = { cardId, x, y, rotation, isSpecialAttack: isSA };
     setPendingPlacement(null);
@@ -780,9 +780,11 @@ export function BoardSim() {
     const isActive = activePlayer === player;
     const selectedCard = selected ? getCard(selected) : null;
     const validMap = player === 'p1' ? validPlacementP1 : validPlacementP2;
-    const saUnlocked = selectedCard && selected
-      ? avSP >= selectedCard.spp && (validMap.get(selected)?.sa ?? true)
-      : false;
+    // Global SA availability: any card in hand has spp > 0 and enough SP
+    const saGlobalAvailable = avSP > 0 && (rawHand ?? []).some(id => {
+      const c = getCard(id);
+      return c && c.spp > 0 && avSP >= c.spp;
+    });
     const placedIds = player === 'p1' ? placedP1Ids : placedP2Ids;
 
     // Deck card grouping
@@ -832,14 +834,28 @@ export function BoardSim() {
       const isSelected = selected === id;
       const isConfirmed = action !== null && action !== 'pass' && action.cardId === id;
       const isPlaced = placedIds.has(id);
-      const noValidPlace = isActive && !isPlaced && !(validMap.get(id)?.normal ?? true);
+      // In SA mode: only cards with spp > 0, enough SP, and valid SA placement are selectable
+      const canSA = isSAMode
+        ? (card?.spp ?? 0) > 0 && avSP >= (card?.spp ?? 0) && (validMap.get(id)?.sa ?? true)
+        : false;
+      const noValidPlace = isActive && !isPlaced && (
+        isSAMode ? !canSA : !(validMap.get(id)?.normal ?? true)
+      );
       const disabled = !isActive || isPlaced || noValidPlace;
       return (
         <button
           key={id}
-          onClick={() => { if (disabled) return; setSelected(isSelected ? null : id); setSAMode(false); }}
+          onClick={() => {
+            if (disabled) return;
+            setSelected(isSelected ? null : id);
+            // Don't change SAMode on card select — SA mode is set before card selection
+          }}
           disabled={disabled}
-          title={isPlaced ? '配置済み' : noValidPlace ? '配置できる場所がありません' : undefined}
+          title={
+            isPlaced ? '配置済み' :
+            isSAMode && noValidPlace ? 'SA配置できません（SPマス隣接が必要）' :
+            noValidPlace ? '配置できる場所がありません' : undefined
+          }
           className={`p-1 rounded border text-xs transition-all ${
             isPlaced || noValidPlace ? 'border-gray-700 bg-gray-900 opacity-30 cursor-not-allowed' :
             isConfirmed ? 'border-green-500 bg-green-900' :
@@ -884,6 +900,23 @@ export function BoardSim() {
           <span className="text-xs text-gray-400 shrink-0">
             SP:<span className={avSP > 0 ? 'text-yellow-300 font-bold' : 'text-gray-500'}>{avSP}</span>
           </span>
+          {/* SA button — shown whenever SA is available, before card selection */}
+          {isActive && action === null && saGlobalAvailable && (
+            <button
+              onClick={() => {
+                if (isSAMode) { setSAMode(false); setSelected(null); }
+                else          { setSAMode(true);  setSelected(null); }
+              }}
+              className={`px-2 py-0.5 rounded text-xs font-bold transition-all shrink-0 ${
+                isSAMode
+                  ? 'bg-red-600 text-white ring-2 ring-red-400 animate-pulse'
+                  : 'bg-red-900 text-red-300 hover:bg-red-700 border border-red-600'
+              }`}
+              title="SAモード切替（SPマス隣接位置にのみ配置可能）"
+            >
+              {isSAMode ? '★SA中' : `SA(SP:${avSP})`}
+            </button>
+          )}
           {/* sort buttons */}
           <div className="flex gap-0.5 ml-auto flex-wrap justify-end">
             {([
@@ -928,18 +961,10 @@ export function BoardSim() {
           {otherGroupIds.map(id => makeCardBtn(id, false))}
         </div>
 
-        {/* Action row - SA only (pass/rotate moved to controls column) */}
-        {isActive && action === null && selected && (selectedCard?.spp ?? 0) > 0 && (
-          <div className="flex gap-1 flex-wrap mt-1 flex-shrink-0">
-            <button onClick={() => setSAMode(!isSAMode)} disabled={!saUnlocked}
-              className={`px-2 py-1 rounded text-xs font-bold transition-all ${
-                isSAMode ? 'bg-red-600 text-white ring-2 ring-red-400 animate-pulse' :
-                saUnlocked ? 'bg-red-900 text-red-300 hover:bg-red-700 border border-red-600' :
-                'bg-gray-800 text-gray-600 border border-gray-700 cursor-not-allowed'
-              }`}
-              title={saUnlocked ? `SA発動（SP${selectedCard?.spp}消費）` : `SP不足(必要:${selectedCard?.spp} 現在:${avSP})`}>
-              {isSAMode ? '★SA中' : `SA(${avSP}/${selectedCard?.spp})`}
-            </button>
+        {/* SA status hint when card is selected in SA mode */}
+        {isActive && action === null && isSAMode && selected && (
+          <div className="text-xs text-red-400 flex-shrink-0 mt-0.5">
+            ★SA：SPマス隣接位置に配置
           </div>
         )}
         {action !== null && (
